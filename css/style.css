@@ -113,6 +113,29 @@ body {
 
 main { padding: 14px 14px 0; max-width: 640px; margin: 0 auto; }
 
+.analysis-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 640px;
+  margin: 10px auto 0;
+  padding: 8px 12px;
+  background: var(--panel);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-md);
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+.analysis-preview[hidden] { display: none; }
+.analysis-preview video {
+  width: 56px;
+  height: 32px;
+  border-radius: 5px;
+  background: #000;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
 /* ---------------------------------------------------------------------
    Inspector-style panels
    --------------------------------------------------------------------- */

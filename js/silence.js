@@ -18,12 +18,24 @@ const FRAME_MS = 20; // 解析の最小単位(ミリ秒)
  */
 export async function decodeAudioFile(file, onProgress = null) {
   try {
-    return await decodeViaDecodeAudioData(file);
+    // decodeAudioDataは動画コンテナに対してはタイムアウトなしで長時間
+    // 応答が返らないことがあるため、一定時間で見切りをつけてフォールバックする
+    return await withTimeout(decodeViaDecodeAudioData(file), 4000, "decodeAudioData timeout");
   } catch (err) {
-    console.warn("decodeAudioData に失敗、リアルタイムキャプチャ方式にフォールバックします:", err);
+    console.warn("decodeAudioData に失敗/タイムアウト、リアルタイムキャプチャ方式にフォールバックします:", err);
     onProgress?.(0, "fallback");
     return await decodeViaRealtimeCapture(file, onProgress);
   }
+}
+
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
 }
 
 async function decodeViaDecodeAudioData(file) {
@@ -47,18 +59,30 @@ async function decodeViaDecodeAudioData(file) {
 function decodeViaRealtimeCapture(file, onProgress) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
-    const videoEl = document.createElement("video");
+
+    // iOSは「見えていない(1x1・画面外・opacity:0)」動画の再生を
+    // 抑制/停止することがあり、それが無限に終わらない不具合の主因だった。
+    // そのため、既存のプレビュー要素があればそれを使い、なければ
+    // 小さいながらも実際に画面上で視認できるサイズ・位置で生成する。
+    let videoEl = document.getElementById("analysisPreviewVideo");
+    let previewWrap = document.getElementById("analysisPreview");
+    const createdDynamically = !videoEl;
+    if (!videoEl) {
+      videoEl = document.createElement("video");
+      Object.assign(videoEl.style, {
+        position: "fixed", right: "10px", bottom: "10px",
+        width: "72px", height: "40px", borderRadius: "6px",
+        zIndex: "9999", background: "#000",
+      });
+      document.body.appendChild(videoEl);
+    }
+    if (previewWrap) previewWrap.hidden = false;
+
     videoEl.src = url;
     videoEl.muted = true;           // ミュート再生はユーザー操作なしでも許可される
     videoEl.playsInline = true;     // iOSでフルスクリーン強制再生になるのを防ぐ
     videoEl.setAttribute("webkit-playsinline", "true");
     videoEl.preload = "auto";
-    // 画面には映さない(が、非表示にしすぎるとデコードが止まる端末があるため
-    // display:none ではなく画面外に配置する)
-    Object.assign(videoEl.style, {
-      position: "fixed", left: "-9999px", top: "0", width: "1px", height: "1px", opacity: "0",
-    });
-    document.body.appendChild(videoEl);
 
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
     const ctx = new AudioCtx();
@@ -76,13 +100,22 @@ function decodeViaRealtimeCapture(file, onProgress) {
       }
     }
 
+    let watchdogTimer = null;
+
     function cleanup() {
       try { processor.disconnect(); } catch {}
       try { source.disconnect(); } catch {}
       try { silentGain.disconnect(); } catch {}
       try { ctx.close(); } catch {}
+      if (watchdogTimer) clearTimeout(watchdogTimer);
       videoEl.pause();
-      videoEl.remove();
+      if (createdDynamically) {
+        videoEl.remove();
+      } else {
+        videoEl.removeAttribute("src");
+        videoEl.load();
+        if (previewWrap) previewWrap.hidden = true;
+      }
       URL.revokeObjectURL(url);
     }
 
@@ -163,6 +196,14 @@ function decodeViaRealtimeCapture(file, onProgress) {
           await ensureRunning();
           await videoEl.play();
           await ensureRunning();
+
+          // ウォッチドッグ: 動画の長さの3倍+20秒を超えても終わらない場合は、
+          // 再生が固まっている(iOSが非表示動画の再生を止めた等)とみなして
+          // 明確なエラーで打ち切る。無言で無限に待ち続けるのを防ぐ。
+          const durationSec = videoEl.duration && isFinite(videoEl.duration) ? videoEl.duration : 60;
+          watchdogTimer = setTimeout(() => {
+            fail(new Error("動画の再生が進まないため処理を中断しました(端末側で再生が停止した可能性があります)。もう一度お試しください。"));
+          }, (durationSec * 3 + 20) * 1000);
 
           // 1秒経ってもonaudioprocessが一度も発火していない場合は、
           // AudioContextが依然サスペンドされている可能性が高いため、
