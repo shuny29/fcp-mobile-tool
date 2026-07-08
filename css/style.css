@@ -210,6 +210,9 @@ details[open] > .panel-header .chevron { transform: rotate(45deg); }
    --------------------------------------------------------------------- */
 .file-drop {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   border: 1.5px dashed var(--hairline);
   border-radius: var(--radius-md);
   padding: 22px 14px;
@@ -234,11 +237,16 @@ details[open] > .panel-header .chevron { transform: rotate(45deg); }
   font-size: 0.88rem;
   color: var(--text);
   font-weight: 500;
+  max-width: 100%;
+  overflow-wrap: break-word;
+  word-break: break-all;
 }
 .file-drop .file-sub {
   font-size: 0.74rem;
   color: var(--text-tertiary);
   margin-top: 2px;
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 
 /* ---------------------------------------------------------------------
@@ -438,6 +446,7 @@ button.secondary:active { background: var(--panel-3); transform: scale(0.985); }
 /* Custom checkbox */
 .check {
   position: relative;
+  display: inline-block;
   width: 21px;
   height: 21px;
   flex-shrink: 0;

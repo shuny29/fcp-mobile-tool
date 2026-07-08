@@ -66,6 +66,16 @@ function decodeViaRealtimeCapture(file, onProgress) {
     let totalSamples = 0;
     let settled = false;
 
+    // iOS Safariでは新規AudioContextが「サスペンド状態」のまま始まることがあり、
+    // その場合 onaudioprocess が一切発火せず、音声を1サンプルも捕まえられない
+    // (totalSamples=0のまま完了してしまう)バグの原因になっていた。
+    // 明示的にresume()して、確実に「再生中」状態にしてから処理を始める。
+    async function ensureRunning() {
+      if (ctx.state !== "running") {
+        try { await ctx.resume(); } catch (err) { console.warn("AudioContext.resume() failed:", err); }
+      }
+    }
+
     function cleanup() {
       try { processor.disconnect(); } catch {}
       try { source.disconnect(); } catch {}
@@ -78,6 +88,10 @@ function decodeViaRealtimeCapture(file, onProgress) {
 
     function finish() {
       if (settled) return;
+      if (totalSamples === 0) {
+        fail(new Error("音声データを取得できませんでした(端末の自動再生制限が原因の可能性があります)。もう一度お試しください。"));
+        return;
+      }
       settled = true;
       const mono = new Float32Array(totalSamples);
       let offset = 0;
@@ -110,39 +124,59 @@ function decodeViaRealtimeCapture(file, onProgress) {
     });
 
     videoEl.addEventListener("loadedmetadata", () => {
-      try {
-        source = ctx.createMediaElementSource(videoEl);
-        processor = ctx.createScriptProcessor(4096, 1, 1);
-        // ScriptProcessorNodeはdestinationに繋がないとonaudioprocessが発火しない
-        // ブラウザがあるため、音量0のGainNodeを経由させて無音のまま繋ぐ
-        silentGain = ctx.createGain();
-        silentGain.gain.value = 0;
+      (async () => {
+        try {
+          await ensureRunning();
 
-        source.connect(processor);
-        processor.connect(silentGain);
-        silentGain.connect(ctx.destination);
+          source = ctx.createMediaElementSource(videoEl);
+          processor = ctx.createScriptProcessor(4096, 1, 1);
+          // ScriptProcessorNodeはdestinationに繋がないとonaudioprocessが発火しない
+          // ブラウザがあるため、音量0のGainNodeを経由させて無音のまま繋ぐ
+          silentGain = ctx.createGain();
+          silentGain.gain.value = 0;
 
-        processor.onaudioprocess = (e) => {
-          const input = e.inputBuffer;
-          const numCh = input.numberOfChannels;
-          const frameLen = input.length;
-          const mixed = new Float32Array(frameLen);
-          for (let ch = 0; ch < numCh; ch++) {
-            const data = input.getChannelData(ch);
-            for (let i = 0; i < frameLen; i++) mixed[i] += data[i] / numCh;
-          }
-          chunks.push(mixed);
-          totalSamples += frameLen;
+          source.connect(processor);
+          processor.connect(silentGain);
+          silentGain.connect(ctx.destination);
 
-          if (videoEl.duration) {
-            onProgress?.(Math.min(1, videoEl.currentTime / videoEl.duration), "capturing");
-          }
-        };
+          let sawAnySample = false;
+          processor.onaudioprocess = (e) => {
+            sawAnySample = true;
+            const input = e.inputBuffer;
+            const numCh = input.numberOfChannels;
+            const frameLen = input.length;
+            const mixed = new Float32Array(frameLen);
+            for (let ch = 0; ch < numCh; ch++) {
+              const data = input.getChannelData(ch);
+              for (let i = 0; i < frameLen; i++) mixed[i] += data[i] / numCh;
+            }
+            chunks.push(mixed);
+            totalSamples += frameLen;
 
-        videoEl.play().catch((playErr) => fail(playErr));
-      } catch (err) {
-        fail(err);
-      }
+            if (videoEl.duration) {
+              onProgress?.(Math.min(1, videoEl.currentTime / videoEl.duration), "capturing");
+            }
+          };
+
+          // 念のため再生開始前後にもう一度resumeを試みる(端末によっては
+          // play()呼び出し後でないと本当のrunning状態に移行しないことがある)
+          await ensureRunning();
+          await videoEl.play();
+          await ensureRunning();
+
+          // 1秒経ってもonaudioprocessが一度も発火していない場合は、
+          // AudioContextが依然サスペンドされている可能性が高いため、
+          // もう一度resumeを試みる(自動リトライ)
+          setTimeout(async () => {
+            if (!sawAnySample && !settled) {
+              console.warn("音声フレームが未取得のため、AudioContextの再開を再試行します");
+              await ensureRunning();
+            }
+          }, 1000);
+        } catch (err) {
+          fail(err);
+        }
+      })();
     });
 
     videoEl.addEventListener("ended", finish);
