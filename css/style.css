@@ -251,11 +251,6 @@ details[open] > .panel-header .chevron { transform: rotate(45deg); }
   height: 100%;
   cursor: pointer;
 }
-.file-drop .file-icon {
-  width: 30px; height: 30px;
-  margin: 0 auto 8px;
-  color: var(--text-tertiary);
-}
 .file-drop .file-label {
   font-size: 0.88rem;
   color: var(--text);
@@ -272,37 +267,45 @@ details[open] > .panel-header .chevron { transform: rotate(45deg); }
   overflow-wrap: break-word;
 }
 
-/* サムネイル行(動画選択後に表示) */
-.thumb-row {
+/* アップロードエリアのアイコン枠(選択前は動画アイコン、選択後はサムネイル+再生バッジ) */
+.file-icon-wrap {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 8px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid var(--hairline-soft);
+  justify-content: center;
 }
-.thumb-row[hidden] { display: none; }
-.thumb {
-  width: 64px;
-  height: 64px;
+.file-icon-wrap .file-icon {
+  width: 30px;
+  height: 30px;
+  color: var(--text-tertiary);
+}
+.file-thumb-img {
+  width: 56px;
+  height: 56px;
   border-radius: var(--radius-sm);
   object-fit: cover;
   background: #000;
-  flex-shrink: 0;
+  border: 1px solid var(--hairline);
 }
-.thumb-meta { min-width: 0; }
-.thumb-name {
-  font-size: 0.85rem;
-  color: var(--text);
-  overflow-wrap: break-word;
-  word-break: break-all;
+.file-thumb-img[hidden] { display: none; }
+.play-badge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
 }
-.thumb-duration {
-  font-size: 0.76rem;
-  color: var(--text-tertiary);
-  margin-top: 2px;
-  font-family: var(--font-mono);
-}
+.play-badge[hidden] { display: none; }
+.play-badge svg { margin-left: 1px; }
 
 /* ---------------------------------------------------------------------
    Rows / controls (inspector param rows)

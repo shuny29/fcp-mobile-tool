@@ -234,6 +234,7 @@ function decodeViaRealtimeCapture(file, onProgress) {
   });
 }
 
+
 function mixToMono(audioBuffer) {
   const numCh = audioBuffer.numberOfChannels;
   if (numCh === 1) return audioBuffer.getChannelData(0);
@@ -246,33 +247,93 @@ function mixToMono(audioBuffer) {
   return out;
 }
 
+// ---------------------------------------------------------------------
+// 声の検出(設定不要): 人の声の帯域だけを取り出し、クリップ自身の音量分布から
+// 自動でしきい値を決める。ユーザーが数値を調整する必要をなくすための実装。
+// ---------------------------------------------------------------------
+
+const AUTO_MIN_SILENCE_MS = 450; // これより長く声が途切れたら無音区間として扱う
+const AUTO_PADDING_MS = 120;     // 発話の前後に残す余白
+const NOISE_PERCENTILE = 0.15;   // 「暗騒音」の目安として使う音量分布の下側パーセンタイル
+const SPEECH_PERCENTILE = 0.80;  // 「発話」の目安として使う音量分布の上側パーセンタイル
+const THRESHOLD_MIX = 0.35;      // 暗騒音〜発話の間のどこにしきい値を置くか(0=暗騒音寄り,1=発話寄り)
+
+// 声の帯域(だいたい100Hz〜4000Hz)だけを残すシンプルなハイパス+ローパス。
+// 低い暗騒音(空調音等)や高域のヒスノイズを声だと誤検出しないようにする。
+function onePoleHighpass(samples, sampleRate, cutoffHz) {
+  const rc = 1 / (2 * Math.PI * cutoffHz);
+  const dt = 1 / sampleRate;
+  const alpha = rc / (rc + dt);
+  const out = new Float32Array(samples.length);
+  let prevIn = samples[0] || 0;
+  let prevOut = 0;
+  for (let i = 1; i < samples.length; i++) {
+    prevOut = alpha * (prevOut + samples[i] - prevIn);
+    prevIn = samples[i];
+    out[i] = prevOut;
+  }
+  return out;
+}
+
+function onePoleLowpass(samples, sampleRate, cutoffHz) {
+  const rc = 1 / (2 * Math.PI * cutoffHz);
+  const dt = 1 / sampleRate;
+  const alpha = dt / (rc + dt);
+  const out = new Float32Array(samples.length);
+  let prev = samples[0] || 0;
+  out[0] = prev;
+  for (let i = 1; i < samples.length; i++) {
+    prev = prev + alpha * (samples[i] - prev);
+    out[i] = prev;
+  }
+  return out;
+}
+
+function isolateVoiceBand(mono, sampleRate) {
+  const hp = onePoleHighpass(mono, sampleRate, 100);
+  return onePoleLowpass(hp, sampleRate, 4000);
+}
+
+function percentile(sortedArr, p) {
+  if (!sortedArr.length) return 0;
+  const idx = Math.min(sortedArr.length - 1, Math.max(0, Math.floor(p * (sortedArr.length - 1))));
+  return sortedArr[idx];
+}
+
 /**
- * 発話区間(=無音でない区間)を検出する。
+ * 発話区間(=無音でない区間)を自動検出する。設定値は一切不要。
+ *
+ * 手順:
+ * 1) 人の声の帯域だけを取り出す(空調音やヒスノイズを声と誤認しないため)
+ * 2) フレームごとの音量(RMS)を計算し、アタック/リリースで包絡線を平滑化
+ *    (語尾や子音での瞬間的な音量低下を無音と誤判定しないため)
+ * 3) このクリップ自身の音量分布から「暗騒音」と「発話」の目安を求め、
+ *    その間にしきい値を自動的に置く(録音レベルや声量に依存しないようにする、
+ *    ≒ 事前に音量を均してから判定するのと同じ効果)
+ * 4) ヒステリシス付きで無音/発話を判定し、短すぎる無音は無視する
+ * 5) 冒頭の無音はカットの対象から外す(先頭は必ず0から残す)
+ *
  * @returns [{startMs, endMs}, ...] 元の音声全体を基準にした発話区間のリスト
  */
-export function detectSpeechSegments(audioBuffer, { threshDb, minSilenceLenMs, paddingMs }) {
+export function detectSpeechSegments(audioBuffer) {
   const sampleRate = audioBuffer.sampleRate;
-  const mono = mixToMono(audioBuffer);
+  const monoRaw = mixToMono(audioBuffer);
   const totalMs = (audioBuffer.length / sampleRate) * 1000;
 
-  const frameSize = Math.max(1, Math.round((sampleRate * FRAME_MS) / 1000));
-  const frameCount = Math.ceil(mono.length / frameSize);
+  const voiceBand = isolateVoiceBand(monoRaw, sampleRate);
 
-  // 1) 各フレームのRMS(音量)を計算
+  const frameSize = Math.max(1, Math.round((sampleRate * FRAME_MS) / 1000));
+  const frameCount = Math.ceil(voiceBand.length / frameSize);
+
   const frameRms = new Float32Array(frameCount);
   for (let f = 0; f < frameCount; f++) {
     const start = f * frameSize;
-    const end = Math.min(start + frameSize, mono.length);
+    const end = Math.min(start + frameSize, voiceBand.length);
     let sumSq = 0;
-    for (let k = start; k < end; k++) sumSq += mono[k] * mono[k];
+    for (let k = start; k < end; k++) sumSq += voiceBand[k] * voiceBand[k];
     frameRms[f] = Math.sqrt(sumSq / (end - start));
   }
 
-  // 2) アタック/リリースで包絡線を平滑化する。
-  //    生のRMSをそのまま閾値と比べると、語尾の子音や息継ぎなど「実際は発話中の
-  //    一瞬の音量低下」まで無音と誤判定してしまう。人の耳が感じる音量は瞬時には
-  //    下がらず徐々に減衰するため、それに近い動きになるよう
-  //    「立ち上がりは速く・減衰はゆっくり」な包絡線を作る。
   const attackCoeff = Math.exp(-1 / (ATTACK_MS / FRAME_MS));
   const releaseCoeff = Math.exp(-1 / (RELEASE_MS / FRAME_MS));
   const envelope = new Float32Array(frameCount);
@@ -284,11 +345,13 @@ export function detectSpeechSegments(audioBuffer, { threshDb, minSilenceLenMs, p
     envelope[f] = env;
   }
 
-  // 3) ヒステリシス付きで無音/発話を判定する。
-  //    「無音に入る閾値」と「発話に戻る閾値」を分けることで、閾値ぎりぎりの
-  //    音量が続く場面でのチラつき(細切れの誤カット)を防ぐ。
-  const enterSilenceLinear = Math.pow(10, threshDb / 20);
-  const exitSilenceLinear = Math.pow(10, (threshDb + HYSTERESIS_DB) / 20);
+  const sorted = envelope.slice().sort();
+  const noiseFloor = percentile(sorted, NOISE_PERCENTILE);
+  const speechLevel = percentile(sorted, SPEECH_PERCENTILE);
+  const range = Math.max(speechLevel - noiseFloor, 1e-6);
+  const enterSilenceLinear = noiseFloor + range * THRESHOLD_MIX;
+  const exitSilenceLinear = enterSilenceLinear * Math.pow(10, HYSTERESIS_DB / 20);
+
   const isSilentFrame = new Uint8Array(frameCount);
   let stateSilent = envelope[0] < enterSilenceLinear;
   for (let f = 0; f < frameCount; f++) {
@@ -300,9 +363,8 @@ export function detectSpeechSegments(audioBuffer, { threshDb, minSilenceLenMs, p
     isSilentFrame[f] = stateSilent ? 1 : 0;
   }
 
-  const minSilenceFrames = Math.max(1, Math.ceil(minSilenceLenMs / FRAME_MS));
+  const minSilenceFrames = Math.max(1, Math.ceil(AUTO_MIN_SILENCE_MS / FRAME_MS));
 
-  // 一定長以上続く無音フレームの区間だけを「本当の無音」として抽出
   const silenceRangesMs = [];
   let runStart = null;
   for (let f = 0; f <= frameCount; f++) {
@@ -317,7 +379,6 @@ export function detectSpeechSegments(audioBuffer, { threshDb, minSilenceLenMs, p
     }
   }
 
-  // 無音区間の補集合 = 発話区間
   const speech = [];
   let cursor = 0;
   for (const [s, e] of silenceRangesMs) {
@@ -326,10 +387,17 @@ export function detectSpeechSegments(audioBuffer, { threshDb, minSilenceLenMs, p
   }
   if (cursor < totalMs) speech.push([cursor, totalMs]);
 
-  // 余白(padding)を追加してから、重なった区間をマージ
+  // 冒頭の無音はカットの対象から外す(最初の区間の開始を0まで広げて残す)
+  if (speech.length && speech[0][0] > 0) {
+    speech[0][0] = 0;
+  } else if (!speech.length && totalMs > 0) {
+    // 発話が1つも検出できなかった場合のフォールバック: 全体を残す
+    speech.push([0, totalMs]);
+  }
+
   const padded = speech.map(([s, e]) => [
-    Math.max(0, s - paddingMs),
-    Math.min(totalMs, e + paddingMs),
+    Math.max(0, s - AUTO_PADDING_MS),
+    Math.min(totalMs, e + AUTO_PADDING_MS),
   ]);
 
   const merged = [];
