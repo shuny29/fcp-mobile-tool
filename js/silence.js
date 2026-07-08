@@ -5,20 +5,155 @@
 const FRAME_MS = 20; // 解析の最小単位(ミリ秒)
 
 /**
- * File/Blob から AudioBuffer にデコードする。
- * iPhoneで撮影した.mov/.mp4は、Safari(WebKit)のdecodeAudioDataで概ねデコード可能。
+ * File/Blob から「AudioBufferと同じインターフェースを持つオブジェクト」にデコードする。
+ *
+ * iPhoneで撮影した.mov/.mp4(映像+音声が1つのコンテナに入ったファイル)は、
+ * Safari の decodeAudioData では失敗することが多い(音声単体のファイルに比べて
+ * サポートが不安定なため)。そのため、まず高速な decodeAudioData を試し、
+ * 失敗した場合は <video> 要素で実際に再生しながら音声を捕まえる
+ * (=リアルタイムキャプチャ)方式にフォールバックする。
+ *
+ * @param {File} file
+ * @param {(progress:number, phase:string) => void} [onProgress] 0〜1の進捗とフェーズ名
  */
-export async function decodeAudioFile(file) {
+export async function decodeAudioFile(file, onProgress = null) {
+  try {
+    return await decodeViaDecodeAudioData(file);
+  } catch (err) {
+    console.warn("decodeAudioData に失敗、リアルタイムキャプチャ方式にフォールバックします:", err);
+    onProgress?.(0, "fallback");
+    return await decodeViaRealtimeCapture(file, onProgress);
+  }
+}
+
+async function decodeViaDecodeAudioData(file) {
   const arrayBuffer = await file.arrayBuffer();
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   const ctx = new AudioCtx();
   try {
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
-    return audioBuffer;
+    // Safariでは arrayBuffer が detach されると再利用できないため、コピーを渡す
+    return await ctx.decodeAudioData(arrayBuffer.slice(0));
   } finally {
-    // decodeAudioDataだけならcloseしてよい(iOSはAudioContext数に上限があるため)
     ctx.close();
   }
+}
+
+/**
+ * <video>要素で実際に(等速で)再生し、Web AudioのScriptProcessorNodeで
+ * PCMサンプルを取りこぼしなく捕まえる。動画コンテナのデコードに関する
+ * ブラウザの相性問題を回避できる、最も互換性の高い方法。
+ * ※ 動画の長さぶんだけ実時間がかかる点に注意(ミュート再生のため音は出ない)。
+ */
+function decodeViaRealtimeCapture(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const videoEl = document.createElement("video");
+    videoEl.src = url;
+    videoEl.muted = true;           // ミュート再生はユーザー操作なしでも許可される
+    videoEl.playsInline = true;     // iOSでフルスクリーン強制再生になるのを防ぐ
+    videoEl.setAttribute("webkit-playsinline", "true");
+    videoEl.preload = "auto";
+    // 画面には映さない(が、非表示にしすぎるとデコードが止まる端末があるため
+    // display:none ではなく画面外に配置する)
+    Object.assign(videoEl.style, {
+      position: "fixed", left: "-9999px", top: "0", width: "1px", height: "1px", opacity: "0",
+    });
+    document.body.appendChild(videoEl);
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AudioCtx();
+    const chunks = [];
+    let totalSamples = 0;
+    let settled = false;
+
+    function cleanup() {
+      try { processor.disconnect(); } catch {}
+      try { source.disconnect(); } catch {}
+      try { silentGain.disconnect(); } catch {}
+      try { ctx.close(); } catch {}
+      videoEl.pause();
+      videoEl.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function finish() {
+      if (settled) return;
+      settled = true;
+      const mono = new Float32Array(totalSamples);
+      let offset = 0;
+      for (const chunk of chunks) {
+        mono.set(chunk, offset);
+        offset += chunk.length;
+      }
+      const sampleRate = ctx.sampleRate;
+      cleanup();
+      resolve({
+        sampleRate,
+        numberOfChannels: 1,
+        length: mono.length,
+        duration: mono.length / sampleRate,
+        getChannelData: () => mono,
+      });
+    }
+
+    function fail(err) {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    }
+
+    let source, processor, silentGain;
+
+    videoEl.addEventListener("error", () => {
+      fail(new Error("動画の読み込みに失敗しました(コーデック非対応の可能性があります)"));
+    });
+
+    videoEl.addEventListener("loadedmetadata", () => {
+      try {
+        source = ctx.createMediaElementSource(videoEl);
+        processor = ctx.createScriptProcessor(4096, 1, 1);
+        // ScriptProcessorNodeはdestinationに繋がないとonaudioprocessが発火しない
+        // ブラウザがあるため、音量0のGainNodeを経由させて無音のまま繋ぐ
+        silentGain = ctx.createGain();
+        silentGain.gain.value = 0;
+
+        source.connect(processor);
+        processor.connect(silentGain);
+        silentGain.connect(ctx.destination);
+
+        processor.onaudioprocess = (e) => {
+          const input = e.inputBuffer;
+          const numCh = input.numberOfChannels;
+          const frameLen = input.length;
+          const mixed = new Float32Array(frameLen);
+          for (let ch = 0; ch < numCh; ch++) {
+            const data = input.getChannelData(ch);
+            for (let i = 0; i < frameLen; i++) mixed[i] += data[i] / numCh;
+          }
+          chunks.push(mixed);
+          totalSamples += frameLen;
+
+          if (videoEl.duration) {
+            onProgress?.(Math.min(1, videoEl.currentTime / videoEl.duration), "capturing");
+          }
+        };
+
+        videoEl.play().catch((playErr) => fail(playErr));
+      } catch (err) {
+        fail(err);
+      }
+    });
+
+    videoEl.addEventListener("ended", finish);
+    // 一部端末で ended が発火しないケースの保険として、再生位置が
+    // 動画長にほぼ到達した時点でも完了扱いにする
+    videoEl.addEventListener("timeupdate", () => {
+      if (videoEl.duration && videoEl.currentTime >= videoEl.duration - 0.05) {
+        finish();
+      }
+    });
+  });
 }
 
 function mixToMono(audioBuffer) {

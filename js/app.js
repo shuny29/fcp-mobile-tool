@@ -13,22 +13,68 @@ let audioBuffer = null;
 let keptSegments = []; // [{startMs, endMs, include}]
 let captionSegments = []; // [{start, end, text, originalText}]
 
+// ---------------------------------------------------------------------
+// セグメントコントロール(<select>の代わりのピルボタン群)
+// ---------------------------------------------------------------------
+function setupSegmented(containerId) {
+  const el = $(containerId);
+  el.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-value]");
+    if (!btn) return;
+    el.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    el.dataset.value = btn.dataset.value;
+  });
+}
+function getSegmented(containerId) {
+  return $(containerId).dataset.value;
+}
+setupSegmented("modelSegmented");
+setupSegmented("lufsSegmented");
+
+// ---------------------------------------------------------------------
+// ステップ進捗ドット(ヘッダー)とパネルの開閉制御
+// ---------------------------------------------------------------------
+function goToStep(stepNumber, panelId) {
+  document.querySelectorAll(".step-dot").forEach((dot) => {
+    const n = Number(dot.dataset.step);
+    dot.classList.toggle("active", n === stepNumber);
+    dot.classList.toggle("done", n < stepNumber);
+  });
+  const panel = $(panelId);
+  panel.hidden = false;
+  panel.open = true;
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function markPanelComplete(panelId) {
+  $(panelId).dataset.complete = "true";
+}
+
 // --- Step1: 動画選択 ---
 $("videoInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   videoFile = file;
-  $("videoInfo").textContent = `読み込み中... (${file.name})`;
+  $("videoLabel").textContent = file.name;
+  $("videoInfo").textContent = "読み込み中...";
 
   try {
-    audioBuffer = await silence.decodeAudioFile(file);
+    audioBuffer = await silence.decodeAudioFile(file, (progress, phase) => {
+      if (phase === "fallback") {
+        $("videoInfo").textContent = "通常の方法で読み込めなかったため、再生しながら解析します...";
+      } else if (phase === "capturing") {
+        $("videoInfo").textContent = `動画を再生しながら音声を解析中... ${Math.round(progress * 100)}%`;
+      }
+    });
     const durationSec = audioBuffer.duration.toFixed(1);
-    $("videoInfo").textContent = `${file.name} (${durationSec}秒)`;
+    $("videoInfo").textContent = `${durationSec}秒 読み込み完了`;
+    markPanelComplete("step-pick");
     showSettingsStep();
   } catch (err) {
     console.error(err);
     $("videoInfo").textContent =
-      "音声の読み込みに失敗しました。動画形式を確認してください(.mov/.mp4推奨)。";
+      `音声の読み込みに失敗しました(${err.message || "不明なエラー"})。別の動画でお試しください。`;
   }
 });
 
@@ -38,8 +84,7 @@ function showSettingsStep() {
   $("minSilenceLen").value = Math.round(prefs.minSilenceLenMs);
   $("padding").value = Math.round(prefs.paddingMs);
   updateSliderLabels();
-  $("step-settings").hidden = false;
-  $("step-settings").scrollIntoView({ behavior: "smooth" });
+  goToStep(2, "step-settings");
 }
 
 function updateSliderLabels() {
@@ -67,10 +112,52 @@ $("btnDetect").addEventListener("click", () => {
     `元の長さ: ${summary.originalSec.toFixed(1)}秒 → カット後: ${summary.keptSec.toFixed(1)}秒` +
     `(削減率 ${(summary.cutRatio * 100).toFixed(1)}%, ${summary.segmentCount}区間)`;
 
+  drawTimelineStrip(totalMs, keptSegments);
+  $("timelineStripWrap").hidden = false;
+
   renderSegmentList();
-  $("step-segments").hidden = false;
-  $("step-segments").scrollIntoView({ behavior: "smooth" });
+  markPanelComplete("step-settings");
+  goToStep(3, "step-segments");
 });
+
+// 署名要素: 無音カットの結果をひと目で把握できる波形ストリップ
+function drawTimelineStrip(totalMs, segments) {
+  const canvas = $("timelineStrip");
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = canvas.clientWidth || 600;
+  const cssHeight = 46;
+  canvas.width = cssWidth * dpr;
+  canvas.height = cssHeight * dpr;
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  const styles = getComputedStyle(document.documentElement);
+  const teal = styles.getPropertyValue("--teal").trim() || "#33d1c2";
+  const hairline = styles.getPropertyValue("--hairline").trim() || "#35363a";
+
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
+  ctx.fillStyle = hairline;
+  roundRect(ctx, 0, 16, cssWidth, 14, 4);
+  ctx.fill();
+
+  ctx.fillStyle = teal;
+  for (const seg of segments) {
+    const x = (seg.startMs / totalMs) * cssWidth;
+    const w = Math.max(1.5, ((seg.endMs - seg.startMs) / totalMs) * cssWidth);
+    roundRect(ctx, x, 16, w, 14, 3);
+    ctx.fill();
+  }
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 
 function renderSegmentList() {
   const list = $("segmentList");
@@ -78,12 +165,18 @@ function renderSegmentList() {
   keptSegments.forEach((seg, i) => {
     const row = document.createElement("div");
     row.className = "segment-item";
-    const gainLabel = typeof seg.gainDb === "number" && Math.abs(seg.gainDb) > 0.05
-      ? ` <span class="gain-tag">${seg.gainDb >= 0 ? "+" : ""}${seg.gainDb.toFixed(1)}dB</span>`
-      : "";
+    let gainLabel = "";
+    if (typeof seg.gainDb === "number" && Math.abs(seg.gainDb) > 0.05) {
+      const cls = seg.gainDb >= 0 ? "boost" : "cut";
+      gainLabel = `<span class="gain-tag ${cls}">${seg.gainDb >= 0 ? "+" : ""}${seg.gainDb.toFixed(1)}dB</span>`;
+    }
     row.innerHTML = `
-      <input type="checkbox" ${seg.include ? "checked" : ""} data-idx="${i}">
-      <span class="time">${fmtTime(seg.startMs / 1000)} - ${fmtTime(seg.endMs / 1000)}${gainLabel}</span>
+      <label class="check">
+        <input type="checkbox" ${seg.include ? "checked" : ""} data-idx="${i}">
+        <span class="box"></span>
+      </label>
+      <span class="time">${fmtTime(seg.startMs / 1000)}–${fmtTime(seg.endMs / 1000)}</span>
+      ${gainLabel}
     `;
     row.querySelector("input").addEventListener("change", (e) => {
       keptSegments[i].include = e.target.checked;
@@ -101,6 +194,9 @@ function fmtTime(sec) {
 // --- Step3: 字幕自動生成 ---
 $("btnTranscribe").addEventListener("click", async () => {
   const included = keptSegments.filter((s) => s.include);
+  const statusLine = $("transcribeStatusLine");
+  statusLine.hidden = false;
+
   if (included.length === 0) {
     $("transcribeStatus").textContent = "カットする区間しかありません。区間を選択してください。";
     return;
@@ -112,7 +208,7 @@ $("btnTranscribe").addEventListener("click", async () => {
   progressEl.value = 0;
 
   $("transcribeStatus").textContent = "モデルを準備中(初回は数十MB〜のダウンロードがあります)...";
-  const modelKey = $("modelSelect").value;
+  const modelKey = getSegmented("modelSegmented");
   const pipe = await asr.getAsrPipeline(modelKey, (info) => {
     if (info.status === "progress" && info.total) {
       const pct = Math.round((info.loaded / info.total) * 100);
@@ -131,7 +227,7 @@ $("btnTranscribe").addEventListener("click", async () => {
 
     // 音量正規化: この発話区間のラウドネスを測定し、目標値に合わせるゲインを算出
     // (実際の音声は書き換えず、FCPXMLの非破壊ゲインとして書き出す)
-    const targetLufs = loudness.LUFS_PRESETS[$("lufsPreset").value];
+    const targetLufs = loudness.LUFS_PRESETS[getSegmented("lufsSegmented")];
     seg.gainDb = await loudness.measureSegmentGain(audioBuffer, startSec, endSec, targetLufs);
 
     const audio16k = await asr.extractResampled16k(audioBuffer, startSec, endSec);
@@ -156,9 +252,10 @@ $("btnTranscribe").addEventListener("click", async () => {
 
   renderSegmentList();
   renderCaptionList();
-  $("step-captions").hidden = false;
+  markPanelComplete("step-segments");
+  goToStep(4, "step-captions");
   $("step-export").hidden = false;
-  $("step-captions").scrollIntoView({ behavior: "smooth" });
+  $("step-export").open = true;
 });
 
 function renderCaptionList() {
@@ -192,12 +289,13 @@ $("btnLearn").addEventListener("click", () => {
       learnedTerms += learning.learnFromCorrection(seg.originalText, seg.text);
     }
   }
-  const prefs = learning.updateSilencePrefs({
+  learning.updateSilencePrefs({
     threshDb: Number($("threshDb").value),
     minSilenceLenMs: Number($("minSilenceLen").value),
     paddingMs: Number($("padding").value),
   });
 
+  markPanelComplete("step-captions");
   $("learnStatus").textContent =
     `学習しました(用語 ${learnedTerms}件 / 無音カット基準を更新)。次回の処理に反映されます。`;
 });
