@@ -3,6 +3,9 @@
 // pydub.silence.detect_nonsilent と同じ考え方をブラウザ用に実装したもの。
 
 const FRAME_MS = 20; // 解析の最小単位(ミリ秒)
+const ATTACK_MS = 10;    // 包絡線の立ち上がりの速さ(発話の始まりを素早く捉える)
+const RELEASE_MS = 60;   // 包絡線の減衰の速さ(短すぎる瞬間的な音量低下では反応しないための最小限の平滑化)
+const HYSTERESIS_DB = 3; // 「発話に戻る」と判定するために閾値より何dB上回る必要があるか
 
 /**
  * File/Blob から「AudioBufferと同じインターフェースを持つオブジェクト」にデコードする。
@@ -253,18 +256,48 @@ export function detectSpeechSegments(audioBuffer, { threshDb, minSilenceLenMs, p
   const totalMs = (audioBuffer.length / sampleRate) * 1000;
 
   const frameSize = Math.max(1, Math.round((sampleRate * FRAME_MS) / 1000));
-  const threshLinear = Math.pow(10, threshDb / 20); // dBFS -> 振幅比
-
   const frameCount = Math.ceil(mono.length / frameSize);
-  const isSilentFrame = new Uint8Array(frameCount);
 
+  // 1) 各フレームのRMS(音量)を計算
+  const frameRms = new Float32Array(frameCount);
   for (let f = 0; f < frameCount; f++) {
     const start = f * frameSize;
     const end = Math.min(start + frameSize, mono.length);
     let sumSq = 0;
     for (let k = start; k < end; k++) sumSq += mono[k] * mono[k];
-    const rms = Math.sqrt(sumSq / (end - start));
-    isSilentFrame[f] = rms < threshLinear ? 1 : 0;
+    frameRms[f] = Math.sqrt(sumSq / (end - start));
+  }
+
+  // 2) アタック/リリースで包絡線を平滑化する。
+  //    生のRMSをそのまま閾値と比べると、語尾の子音や息継ぎなど「実際は発話中の
+  //    一瞬の音量低下」まで無音と誤判定してしまう。人の耳が感じる音量は瞬時には
+  //    下がらず徐々に減衰するため、それに近い動きになるよう
+  //    「立ち上がりは速く・減衰はゆっくり」な包絡線を作る。
+  const attackCoeff = Math.exp(-1 / (ATTACK_MS / FRAME_MS));
+  const releaseCoeff = Math.exp(-1 / (RELEASE_MS / FRAME_MS));
+  const envelope = new Float32Array(frameCount);
+  let env = frameRms[0] || 0;
+  for (let f = 0; f < frameCount; f++) {
+    const x = frameRms[f];
+    const coeff = x > env ? attackCoeff : releaseCoeff;
+    env = coeff * env + (1 - coeff) * x;
+    envelope[f] = env;
+  }
+
+  // 3) ヒステリシス付きで無音/発話を判定する。
+  //    「無音に入る閾値」と「発話に戻る閾値」を分けることで、閾値ぎりぎりの
+  //    音量が続く場面でのチラつき(細切れの誤カット)を防ぐ。
+  const enterSilenceLinear = Math.pow(10, threshDb / 20);
+  const exitSilenceLinear = Math.pow(10, (threshDb + HYSTERESIS_DB) / 20);
+  const isSilentFrame = new Uint8Array(frameCount);
+  let stateSilent = envelope[0] < enterSilenceLinear;
+  for (let f = 0; f < frameCount; f++) {
+    if (stateSilent) {
+      if (envelope[f] >= exitSilenceLinear) stateSilent = false;
+    } else {
+      if (envelope[f] < enterSilenceLinear) stateSilent = true;
+    }
+    isSilentFrame[f] = stateSilent ? 1 : 0;
   }
 
   const minSilenceFrames = Math.max(1, Math.ceil(minSilenceLenMs / FRAME_MS));

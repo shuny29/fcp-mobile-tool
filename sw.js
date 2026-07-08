@@ -8,7 +8,7 @@
 // (activateイベントで「CACHE_NAMEと一致しない古いキャッシュ」を削除する仕組みのため、
 // 名前が変わらないと「更新された」と認識できません)。
 
-const CACHE_NAME = "fcp-auto-tool-shell-v4";
+const CACHE_NAME = "fcp-auto-tool-shell-v5";
 const APP_SHELL = [
   "./",
   "./index.html",

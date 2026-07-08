@@ -1,11 +1,11 @@
 {
-  "name": "FCP自動カット&字幕",
-  "short_name": "FCP自動編集",
+  "name": "RoughCut",
+  "short_name": "RoughCut",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#101418",
-  "theme_color": "#101418",
+  "background_color": "#17181b",
+  "theme_color": "#17181b",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }

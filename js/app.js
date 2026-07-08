@@ -10,8 +10,8 @@ const $ = (id) => document.getElementById(id);
 // --- アプリの状態 ---
 let videoFile = null;
 let audioBuffer = null;
-let keptSegments = []; // [{startMs, endMs, include}]
-let captionSegments = []; // [{start, end, text, originalText}]
+let keptSegments = []; // [{startMs, endMs, include, gainDb?}]
+let captionSegments = []; // [{start, end, text, originalText}] (元動画のタイムライン基準)
 
 // ---------------------------------------------------------------------
 // セグメントコントロール(<select>の代わりのピルボタン群)
@@ -51,13 +51,16 @@ function markPanelComplete(panelId) {
   $(panelId).dataset.complete = "true";
 }
 
-// --- Step1: 動画選択 ---
+// ---------------------------------------------------------------------
+// Step1: 動画選択 + サムネイル表示
+// ---------------------------------------------------------------------
 $("videoInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
   videoFile = file;
   $("videoLabel").textContent = file.name;
   $("videoInfo").textContent = "読み込み中...";
+  $("thumbRow").hidden = true;
 
   try {
     audioBuffer = await silence.decodeAudioFile(file, (progress, phase) => {
@@ -70,6 +73,7 @@ $("videoInput").addEventListener("change", async (e) => {
     const durationSec = audioBuffer.duration.toFixed(1);
     $("videoInfo").textContent = `${durationSec}秒 読み込み完了`;
     markPanelComplete("step-pick");
+    showThumbnail(file, durationSec);
     showSettingsStep();
   } catch (err) {
     console.error(err);
@@ -77,6 +81,53 @@ $("videoInput").addEventListener("change", async (e) => {
       `音声の読み込みに失敗しました(${err.message || "不明なエラー"})。別の動画でお試しください。`;
   }
 });
+
+// 動画の一場面を切り出して小さなサムネイル画像にする
+function generateThumbnail(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const video = document.createElement("video");
+    video.src = url;
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "metadata";
+
+    const settle = (fn, val) => { URL.revokeObjectURL(url); fn(val); };
+
+    video.addEventListener("loadedmetadata", () => {
+      const seekTo = Math.min(0.3, (video.duration || 1) / 2);
+      try { video.currentTime = seekTo; } catch { /* noop */ }
+    });
+    video.addEventListener("seeked", () => {
+      try {
+        const w = 160;
+        const ratio = (video.videoHeight && video.videoWidth) ? video.videoHeight / video.videoWidth : 9 / 16;
+        const h = Math.max(1, Math.round(w * ratio));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(video, 0, 0, w, h);
+        settle(resolve, canvas.toDataURL("image/jpeg", 0.82));
+      } catch (err) {
+        settle(reject, err);
+      }
+    });
+    video.addEventListener("error", () => settle(reject, new Error("サムネイル生成に失敗しました")));
+  });
+}
+
+async function showThumbnail(file, durationSecText) {
+  try {
+    const dataUrl = await generateThumbnail(file);
+    $("videoThumb").src = dataUrl;
+    $("thumbName").textContent = file.name;
+    $("thumbDuration").textContent = `${durationSecText}秒`;
+    $("thumbRow").hidden = false;
+  } catch (err) {
+    console.warn("サムネイル生成に失敗:", err);
+    // サムネイルが作れなくても処理自体は続行できるので、ここでは無視する
+  }
+}
 
 function showSettingsStep() {
   const prefs = learning.getSilencePrefs();
@@ -96,7 +147,9 @@ function updateSliderLabels() {
   $(id).addEventListener("input", updateSliderLabels);
 });
 
-// --- Step2: 無音検出 ---
+// ---------------------------------------------------------------------
+// Step2: 無音検出 + この設定を学習
+// ---------------------------------------------------------------------
 $("btnDetect").addEventListener("click", () => {
   const opts = {
     threshDb: Number($("threshDb").value),
@@ -118,6 +171,15 @@ $("btnDetect").addEventListener("click", () => {
   renderSegmentList();
   markPanelComplete("step-settings");
   goToStep(3, "step-segments");
+});
+
+$("btnLearnCut").addEventListener("click", () => {
+  learning.updateSilencePrefs({
+    threshDb: Number($("threshDb").value),
+    minSilenceLenMs: Number($("minSilenceLen").value),
+    paddingMs: Number($("padding").value),
+  });
+  $("learnCutStatus").textContent = "学習しました。次回の無音カット基準に反映されます。";
 });
 
 // 署名要素: 無音カットの結果をひと目で把握できる波形ストリップ
@@ -191,7 +253,9 @@ function fmtTime(sec) {
   return `${m}:${s.padStart(4, "0")}`;
 }
 
-// --- Step3: 字幕自動生成 ---
+// ---------------------------------------------------------------------
+// Step3: 字幕自動生成 + 音量正規化
+// ---------------------------------------------------------------------
 $("btnTranscribe").addEventListener("click", async () => {
   const included = keptSegments.filter((s) => s.include);
   const statusLine = $("transcribeStatusLine");
@@ -254,8 +318,6 @@ $("btnTranscribe").addEventListener("click", async () => {
   renderCaptionList();
   markPanelComplete("step-segments");
   goToStep(4, "step-captions");
-  $("step-export").hidden = false;
-  $("step-export").open = true;
 });
 
 function renderCaptionList() {
@@ -281,26 +343,121 @@ function escapeHtml(str) {
   }[c]));
 }
 
-// --- Step4: 学習 ---
-$("btnLearn").addEventListener("click", () => {
+// ---------------------------------------------------------------------
+// Step4: 字幕の修正を学習 + プレビューへ進む
+// ---------------------------------------------------------------------
+$("btnLearnGlossary").addEventListener("click", () => {
   let learnedTerms = 0;
   for (const seg of captionSegments) {
     if (seg.text !== seg.originalText) {
       learnedTerms += learning.learnFromCorrection(seg.originalText, seg.text);
     }
   }
-  learning.updateSilencePrefs({
-    threshDb: Number($("threshDb").value),
-    minSilenceLenMs: Number($("minSilenceLen").value),
-    paddingMs: Number($("padding").value),
-  });
-
-  markPanelComplete("step-captions");
-  $("learnStatus").textContent =
-    `学習しました(用語 ${learnedTerms}件 / 無音カット基準を更新)。次回の処理に反映されます。`;
+  $("learnGlossaryStatus").textContent =
+    `学習しました(用語 ${learnedTerms}件)。次回の文字起こしに反映されます。`;
 });
 
-// --- Step5: 書き出し ---
+$("btnGotoPreview").addEventListener("click", () => {
+  markPanelComplete("step-captions");
+  enterPreviewStep();
+  goToStep(5, "step-preview");
+});
+
+// ---------------------------------------------------------------------
+// Step5: プレビュー再生
+// ---------------------------------------------------------------------
+let previewSegments = [];
+let previewCtx = null;
+let previewGainNode = null;
+let previewGraphReady = false;
+
+function setupPreviewGraphOnce() {
+  if (previewGraphReady) return;
+  previewGraphReady = true;
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    previewCtx = new AudioCtx();
+    const source = previewCtx.createMediaElementSource($("previewVideo"));
+    previewGainNode = previewCtx.createGain();
+    source.connect(previewGainNode);
+    previewGainNode.connect(previewCtx.destination);
+  } catch (err) {
+    console.warn("プレビュー用の音量調整グラフの初期化に失敗しました:", err);
+  }
+}
+
+function findSegmentAtMs(segments, ms) {
+  for (const seg of segments) {
+    if (ms >= seg.startMs && ms <= seg.endMs) return seg;
+  }
+  return null;
+}
+function findNextSegmentStartMs(segments, ms) {
+  for (const seg of segments) {
+    if (seg.startMs > ms) return seg.startMs;
+  }
+  return null;
+}
+
+$("previewVideo").addEventListener("timeupdate", () => {
+  if (!previewSegments.length) return;
+  const video = $("previewVideo");
+  const curMs = video.currentTime * 1000;
+  const activeSeg = findSegmentAtMs(previewSegments, curMs);
+
+  if (!activeSeg) {
+    const nextStartMs = findNextSegmentStartMs(previewSegments, curMs);
+    if (nextStartMs != null) {
+      video.currentTime = nextStartMs / 1000;
+    } else if (!video.paused) {
+      video.pause();
+    }
+    $("previewCaptionOverlay").textContent = "";
+    return;
+  }
+
+  if (previewGainNode && previewCtx) {
+    const gainLinear = typeof activeSeg.gainDb === "number" ? Math.pow(10, activeSeg.gainDb / 20) : 1;
+    try {
+      previewGainNode.gain.setTargetAtTime(gainLinear, previewCtx.currentTime, 0.05);
+    } catch {
+      previewGainNode.gain.value = gainLinear;
+    }
+  }
+
+  const cur = video.currentTime;
+  const activeCaption = captionSegments.find((c) => cur >= c.start && cur <= c.end);
+  $("previewCaptionOverlay").textContent = activeCaption ? activeCaption.text : "";
+});
+
+function enterPreviewStep() {
+  previewSegments = keptSegments
+    .filter((s) => s.include)
+    .slice()
+    .sort((a, b) => a.startMs - b.startMs);
+
+  const video = $("previewVideo");
+  if (video.dataset.objectUrl) URL.revokeObjectURL(video.dataset.objectUrl);
+  const url = URL.createObjectURL(videoFile);
+  video.dataset.objectUrl = url;
+  video.src = url;
+  video.currentTime = previewSegments[0] ? previewSegments[0].startMs / 1000 : 0;
+
+  setupPreviewGraphOnce();
+  if (previewCtx && previewCtx.state !== "running") {
+    previewCtx.resume().catch(() => {});
+  }
+}
+
+$("btnGotoExport").addEventListener("click", () => {
+  $("previewVideo").pause();
+  markPanelComplete("step-preview");
+  goToStep(6, "step-export");
+});
+
+// ---------------------------------------------------------------------
+// Step6: fcpxml形式で書き出し
+// ---------------------------------------------------------------------
 function buildOutputFiles() {
   const included = keptSegments.filter((s) => s.include);
   const fcpxml = exporter.buildFcpxml(videoFile.name, included);
@@ -324,7 +481,7 @@ $("btnShare").addEventListener("click", async () => {
   ];
   if (navigator.canShare && navigator.canShare({ files })) {
     try {
-      await navigator.share({ files, title: "FCP自動カット & 字幕" });
+      await navigator.share({ files, title: "RoughCut" });
     } catch (err) {
       if (err.name !== "AbortError") console.error(err);
     }
