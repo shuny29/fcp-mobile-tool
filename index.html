@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FCP自動カット&字幕</title>
+<meta name="theme-color" content="#101418">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="FCP自動編集">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="app-header">
+  <h1>FCP自動カット&字幕</h1>
+  <p class="subtitle">端末内だけで処理・完全オフライン対応</p>
+</header>
+
+<main>
+
+  <!-- Step 1: 動画選択 -->
+  <section class="card" id="step-pick">
+    <h2>1. 動画を選ぶ</h2>
+    <input type="file" id="videoInput" accept="video/*">
+    <p class="hint" id="videoInfo">未選択</p>
+  </section>
+
+  <!-- Step 2: 無音カット設定 -->
+  <section class="card" id="step-settings" hidden>
+    <h2>2. 無音カットの設定</h2>
+
+    <label>無音とみなす音量: <span id="threshDbLabel"></span> dBFS
+      <input type="range" id="threshDb" min="-60" max="-20" step="1">
+    </label>
+
+    <label>無音とみなす長さ: <span id="minSilenceLabel"></span> ms
+      <input type="range" id="minSilenceLen" min="200" max="2000" step="50">
+    </label>
+
+    <label>発話前後の余白: <span id="paddingLabel"></span> ms
+      <input type="range" id="padding" min="0" max="500" step="10">
+    </label>
+
+    <button id="btnDetect" class="primary">無音区間を検出</button>
+    <p class="hint" id="detectSummary"></p>
+  </section>
+
+  <!-- Step 3: 発話区間の確認 -->
+  <section class="card" id="step-segments" hidden>
+    <h2>3. カットする区間を確認</h2>
+    <p class="hint">チェックを外すと、その区間はカット(削除)されます</p>
+    <div id="segmentList" class="segment-list"></div>
+
+    <label>字幕モデル
+      <select id="modelSelect">
+        <option value="tiny">軽量・高速(tiny)</option>
+        <option value="base" selected>標準(base)</option>
+        <option value="small">高精度・低速(small)</option>
+      </select>
+    </label>
+    <label>音量の最適化先(演者の声の大小を自動で均一化)
+      <select id="lufsPreset">
+        <option value="youtube" selected>標準(YouTube等 / -14 LUFS)</option>
+        <option value="tiktok_instagram">TikTok・Instagram向け(やや大きめ / -12 LUFS)</option>
+        <option value="podcast">ポッドキャスト向け(控えめ / -16 LUFS)</option>
+      </select>
+    </label>
+    <button id="btnTranscribe" class="primary">字幕を自動生成(音量調整も同時に実行)</button>
+    <p class="hint" id="transcribeStatus"></p>
+    <progress id="transcribeProgress" value="0" max="100" hidden></progress>
+  </section>
+
+  <!-- Step 4: 字幕の修正 -->
+  <section class="card" id="step-captions" hidden>
+    <h2>4. 字幕を確認・修正</h2>
+    <p class="hint">誤認識を直すと、次回から自動で学習されます</p>
+    <div id="captionList" class="caption-list"></div>
+  </section>
+
+  <!-- Step 5: 書き出し -->
+  <section class="card" id="step-export" hidden>
+    <h2>5. Macへ送る</h2>
+    <button id="btnLearn" class="secondary">この修正内容と設定を学習させる</button>
+    <p class="hint" id="learnStatus"></p>
+    <div class="export-buttons">
+      <button id="btnShare" class="primary">AirDropで送る(共有)</button>
+      <button id="btnDownload" class="secondary">ファイルに保存(iCloud Drive等)</button>
+    </div>
+    <p class="hint">
+      FCP側の手順: File &gt; Import &gt; XML… でカット済みタイムラインを読み込み、
+      そのシーケンスを開いた状態で File &gt; Import &gt; Captions… でSRTを読み込んでください。
+    </p>
+  </section>
+
+</main>
+
+<footer>
+  <p>すべての処理は端末内で完結します(サーバー送信なし)</p>
+</footer>
+
+<script type="module" src="js/app.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

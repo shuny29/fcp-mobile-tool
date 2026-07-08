@@ -1,0 +1,128 @@
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif;
+  background: #101418;
+  color: #f0f2f4;
+  padding-bottom: 40px;
+}
+
+.app-header {
+  padding: env(safe-area-inset-top, 20px) 20px 12px;
+  text-align: center;
+}
+.app-header h1 { margin: 0; font-size: 1.3rem; }
+.subtitle { margin: 4px 0 0; color: #9aa4ad; font-size: 0.85rem; }
+
+main { padding: 0 16px; max-width: 640px; margin: 0 auto; }
+
+.card {
+  background: #181d23;
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.card h2 { margin-top: 0; font-size: 1.05rem; }
+
+.hint { color: #9aa4ad; font-size: 0.85rem; }
+
+input[type="file"] {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  background: #232a32;
+  color: #f0f2f4;
+  border: 1px solid #2f3944;
+}
+
+label {
+  display: block;
+  margin: 14px 0 4px;
+  font-size: 0.9rem;
+  color: #cdd4da;
+}
+
+input[type="range"] { width: 100%; }
+select {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  background: #232a32;
+  color: #f0f2f4;
+  border: 1px solid #2f3944;
+}
+
+button {
+  display: block;
+  width: 100%;
+  padding: 13px;
+  margin-top: 14px;
+  border-radius: 12px;
+  border: none;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+button.primary { background: #3b82f6; color: white; }
+button.secondary { background: #2a323b; color: #f0f2f4; }
+button:active { opacity: 0.8; }
+
+.export-buttons { display: flex; flex-direction: column; gap: 10px; }
+
+.segment-list, .caption-list {
+  max-height: 340px;
+  overflow-y: auto;
+  margin-top: 10px;
+}
+
+.segment-item, .caption-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid #232a32;
+}
+.segment-item .time, .caption-item .time {
+  font-variant-numeric: tabular-nums;
+  color: #9aa4ad;
+  font-size: 0.8rem;
+  min-width: 92px;
+}
+
+.gain-tag {
+  display: inline-block;
+  background: #1f2b3a;
+  color: #7fb2ff;
+  border-radius: 6px;
+  padding: 1px 6px;
+  font-size: 0.75rem;
+  margin-left: 4px;
+}
+
+.caption-item textarea {
+  flex: 1;
+  min-height: 44px;
+  border-radius: 8px;
+  border: 1px solid #2f3944;
+  background: #0d1116;
+  color: #f0f2f4;
+  padding: 8px;
+  font-size: 0.95rem;
+  resize: vertical;
+}
+
+input[type="checkbox"] {
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+}
+
+progress { width: 100%; margin-top: 10px; }
+
+footer {
+  text-align: center;
+  color: #57626c;
+  font-size: 0.75rem;
+  margin-top: 20px;
+}
