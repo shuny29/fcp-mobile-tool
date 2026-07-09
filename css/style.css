@@ -600,19 +600,21 @@ footer .version {
 }
 .preview-caption {
   position: absolute;
-  left: 0; right: 0; bottom: 10px;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, -50%);
   text-align: center;
   padding: 0 12px;
   pointer-events: none;
+  width: 100%;
 }
 .preview-caption:not(:empty) {
   display: inline-block;
-  left: 50%;
-  right: auto;
-  transform: translateX(-50%);
+  width: auto;
   background: rgba(0, 0, 0, 0.72);
   color: #fff;
   font-size: 0.8rem;
+  line-height: 1.5;
   padding: 4px 10px;
   border-radius: 5px;
   max-width: 90%;

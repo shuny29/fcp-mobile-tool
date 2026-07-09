@@ -401,6 +401,7 @@ $("btnGotoPreview").addEventListener("click", () => {
 const BOUNDARY_EPS_MS = 30; // 境界付近のちらつき(細かい往復シーク)を防ぐ許容誤差
 
 let previewSegments = [];
+let previewCues = [];
 let previewCtx = null;
 let previewGainNode = null;
 let previewGraphReady = false;
@@ -459,7 +460,7 @@ previewVideoEl.addEventListener("timeupdate", () => {
     } else if (!previewVideoEl.paused) {
       previewVideoEl.pause();
     }
-    $("previewCaptionOverlay").textContent = "";
+    $("previewCaptionOverlay").innerHTML = "";
     return;
   }
 
@@ -473,8 +474,10 @@ previewVideoEl.addEventListener("timeupdate", () => {
   }
 
   const cur = previewVideoEl.currentTime;
-  const activeCaption = captionSegments.find((c) => cur >= c.start && cur <= c.end);
-  $("previewCaptionOverlay").textContent = activeCaption ? activeCaption.text : "";
+  const activeCue = previewCues.find((c) => cur >= c.start && cur <= c.end);
+  $("previewCaptionOverlay").innerHTML = activeCue
+    ? activeCue.lines.map(escapeHtml).join("<br>")
+    : "";
 });
 
 function enterPreviewStep() {
@@ -482,6 +485,9 @@ function enterPreviewStep() {
     .filter((s) => s.include)
     .slice()
     .sort((a, b) => a.startMs - b.startMs);
+  // プレビューは元動画のタイムラインをそのまま再生する(仮想カット方式)ため、
+  // キャプションも元動画のタイムライン基準のまま整形ルールを適用する
+  previewCues = exporter.formatAllCaptionCues(captionSegments);
 
   if (previewVideoEl.dataset.objectUrl) {
     URL.revokeObjectURL(previewVideoEl.dataset.objectUrl);
@@ -516,9 +522,11 @@ $("btnGotoExport").addEventListener("click", () => {
 // ---------------------------------------------------------------------
 function buildOutputFiles() {
   const included = keptSegments.filter((s) => s.include);
-  const fcpxml = exporter.buildFcpxml(videoFile.name, included);
   const remapped = exporter.remapCaptionsToCutTimeline(captionSegments, included);
-  const srt = exporter.buildSrt(remapped);
+  const cues = exporter.formatAllCaptionCues(remapped);
+  // カット・音量調整に加えて、テロップ(Basic Title)もFCPXMLに直接埋め込む
+  const fcpxml = exporter.buildFcpxml(videoFile.name, included, { captionCues: cues });
+  const srt = exporter.buildSrt(cues);
 
   const baseName = videoFile.name.replace(/\.[^/.]+$/, "");
   return {
@@ -537,7 +545,7 @@ $("btnShare").addEventListener("click", async () => {
   ];
   if (navigator.canShare && navigator.canShare({ files })) {
     try {
-      await navigator.share({ files, title: "RoughCut" });
+      await navigator.share({ files, title: "Rough Cut X" });
     } catch (err) {
       if (err.name !== "AbortError") console.error(err);
     }

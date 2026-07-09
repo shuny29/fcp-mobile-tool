@@ -1,6 +1,6 @@
 {
-  "name": "RoughCut",
-  "short_name": "RoughCut",
+  "name": "Rough Cut X",
+  "short_name": "Rough Cut X",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

@@ -3,13 +3,13 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>RoughCut</title>
+<title>Rough Cut X</title>
 <meta name="theme-color" content="#17181b">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="RoughCut">
+<meta name="apple-mobile-web-app-title" content="Rough Cut X">
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -20,7 +20,7 @@
     </svg>
   </div>
   <div class="titles">
-    <h1>RoughCut</h1>
+    <h1>Rough Cut X</h1>
     <p class="subtitle">端末内で完結するラフカット生成</p>
   </div>
   <div class="step-progress" id="stepProgress" aria-hidden="true">
@@ -45,7 +45,7 @@
     </summary>
     <div class="panel-body">
       <label class="file-drop">
-        <input type="file" id="videoInput" accept="video/*">
+        <input type="file" id="videoInput" accept=".mov,.mp4,video/quicktime,video/mp4">
         <span class="file-icon-wrap">
           <svg class="file-icon" id="fileIconSvg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
             <rect x="3" y="5" width="18" height="14" rx="2.5"/>
@@ -57,7 +57,7 @@
           </span>
         </span>
         <div class="file-label" id="videoLabel">動画を選択</div>
-        <div class="file-sub" id="videoInfo">写真アプリからmov / mp4を選べます</div>
+        <div class="file-sub" id="videoInfo">「ファイルを選択」からお選びください(写真ライブラリは読み込めない場合があります)</div>
       </label>
 
       <button id="btnStartAnalysis" class="primary" hidden>動画を解析</button>
@@ -183,8 +183,13 @@
       </div>
 
       <p class="hint" style="margin-top:14px;">
-        FCP側の手順: File &gt; Import &gt; XML… でカット済みタイムラインを読み込み、
-        そのシーケンスを開いた状態で File &gt; Import &gt; Captions… でSRTを読み込んでください。
+        FCP側の手順: File &gt; Import &gt; XML… を実行するだけで、カット・音量調整・
+        テロップ(仮のフォントで自動配置済み)が全て入ったタイムラインが読み込まれます。
+        あとはFCP側でフォントやデザインを仕上げてください。
+      </p>
+      <p class="hint">
+        SRT字幕ファイルも念のため書き出しています(テロップの読み込みがうまく
+        いかない場合の予備・参考用です)。
       </p>
     </div>
   </details>
@@ -193,7 +198,7 @@
 
 <footer>
   <p>すべての処理は端末内で完結します</p>
-  <p class="version">RoughCut v1.10.0</p>
+  <p class="version">Rough Cut X v1.13.0</p>
 </footer>
 
 <script type="module" src="js/app.js"></script>
