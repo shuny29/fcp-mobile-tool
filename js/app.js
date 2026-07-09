@@ -130,7 +130,9 @@ function generateThumbnail(file) {
     video.muted = true;
     video.playsInline = true;
     video.setAttribute("webkit-playsinline", "true");
-    video.preload = "metadata";
+    // "metadata"だけだと、seek完了(seekedイベント)がデスクトップブラウザで
+    // 発火しないことがあったため、実データも先読みさせる
+    video.preload = "auto";
     document.body.appendChild(video);
 
     let settledFlag = false;
@@ -138,22 +140,13 @@ function generateThumbnail(file) {
       if (settledFlag) return;
       settledFlag = true;
       clearTimeout(timeoutTimer);
+      clearTimeout(fallbackTimer);
       URL.revokeObjectURL(url);
       video.remove();
       fn(val);
     };
 
-    // サムネイル生成が万一固まっても、他の処理をブロックしないための保険
-    const timeoutTimer = setTimeout(() => {
-      settle(reject, new Error("サムネイル生成がタイムアウトしました"));
-    }, 8000);
-
-    video.src = url;
-    video.addEventListener("loadedmetadata", () => {
-      const seekTo = Math.min(0.3, (video.duration || 1) / 2);
-      try { video.currentTime = seekTo; } catch { /* noop */ }
-    });
-    video.addEventListener("seeked", () => {
+    const captureFrame = () => {
       try {
         const w = 160;
         const ratio = (video.videoHeight && video.videoWidth) ? video.videoHeight / video.videoWidth : 9 / 16;
@@ -166,7 +159,25 @@ function generateThumbnail(file) {
       } catch (err) {
         settle(reject, err);
       }
+    };
+
+    // サムネイル生成が万一固まっても、他の処理をブロックしないための保険
+    const timeoutTimer = setTimeout(() => {
+      settle(reject, new Error("サムネイル生成がタイムアウトしました"));
+    }, 8000);
+
+    // "seeked"イベントがブラウザによって発火しないケースがあるため、
+    // 一定時間内に発火しなければ、その時点で表示されているフレームを
+    // そのままキャプチャするフォールバックを用意しておく
+    let fallbackTimer = null;
+
+    video.src = url;
+    video.addEventListener("loadedmetadata", () => {
+      const seekTo = Math.min(0.3, (video.duration || 1) / 2);
+      try { video.currentTime = seekTo; } catch { /* noop */ }
+      fallbackTimer = setTimeout(captureFrame, 1500);
     });
+    video.addEventListener("seeked", captureFrame);
     video.addEventListener("error", () => settle(reject, new Error("サムネイル生成に失敗しました")));
   });
 }
