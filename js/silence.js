@@ -102,7 +102,15 @@ function decodeViaRealtimeCapture(file, onProgress, primedCtx = null) {
     document.body.appendChild(videoEl);
 
     videoEl.src = url;
-    videoEl.muted = true;           // ミュート再生はユーザー操作なしでも許可される
+    // 自動再生の許可を確実に得るため、開始時点ではミュートにしておく
+    // (ミュート再生はユーザー操作なしでも許可されるため)。ただし、
+    // ミュートのままだとブラウザによってはcreateMediaElementSourceで
+    // Web Audio側に渡される音声データ自体まで減衰・消音してしまい、
+    // 長い動画のキャプチャがほぼ無音として取得される重大な不具合があった。
+    // そのため、実際に再生が始まった直後(下記の'playing'イベント)で
+    // すぐにミュートを解除する。実際に音が聞こえないのは、後段のWeb Audio
+    // グラフ内のsilentGain(gain=0)で担保している。
+    videoEl.muted = true;
     videoEl.playsInline = true;     // iOSでフルスクリーン強制再生になるのを防ぐ
     videoEl.setAttribute("webkit-playsinline", "true");
     videoEl.preload = "auto";
@@ -224,6 +232,10 @@ function decodeViaRealtimeCapture(file, onProgress, primedCtx = null) {
           await ensureRunning();
           await videoEl.play();
           await ensureRunning();
+          // 再生が実際に始まったので、ここでミュートを解除する
+          // (Web Audioに渡る音声データが減衰しないようにするため。
+          // スピーカーから実際に音が出ることはsilentGainで防いでいる)
+          videoEl.muted = false;
 
           // ウォッチドッグ: 動画の長さの3倍+20秒を超えても終わらない場合は、
           // 再生が固まっている(iOSが非表示動画の再生を止めた等)とみなして
@@ -281,15 +293,16 @@ function mixToMono(audioBuffer) {
 // 自動でしきい値を決める。ユーザーが数値を調整する必要をなくすための実装。
 // ---------------------------------------------------------------------
 
-const AUTO_MIN_SILENCE_MS = 800; // これより長く声が途切れたら無音区間として扱う(短い間は残す)
+const AUTO_MIN_SILENCE_MS = 1200; // これより長く声が途切れたら無音区間として扱う(短い間は残す)
 const AUTO_PADDING_MS = 350;     // 発話の前後に残す余白(語尾の余韻を残すため多めに)
 const NOISE_PERCENTILE = 0.15;   // 「暗騒音」の目安として使う音量分布の下側パーセンタイル
 const SPEECH_PERCENTILE = 0.60;  // 「発話」の目安として使う音量分布の上側パーセンタイル。
                                   // 高すぎると、クリップ内で一番大きい声だけを基準にしてしまい、
                                   // それより静かな(が正当な)発話が無音側に埋もれてしまうため、
                                   // やや低めにしてある。
-const THRESHOLD_MIX = 0.18;      // 暗騒音〜発話の間のどこにしきい値を置くか(0=暗騒音寄り,1=発話寄り)。
-                                  // 低めにすることで、明らかに無音の部分だけをカット対象にする
+const THRESHOLD_MIX = 0.08;      // 暗騒音〜発話の間のどこにしきい値を置くか(0=暗騒音寄り,1=発話寄り)。
+                                  // 実際の録音で「語尾の余韻」まで無音と誤判定される
+                                  // 事例があったため、より暗騒音寄りに調整している。
 
 // 検出「後」に区間ごとの音量を均すための設定(検出結果には一切影響しない)
 const GAIN_MAX_BOOST_DB = 15;  // 持ち上げすぎるとノイズも増幅するため上限を設ける

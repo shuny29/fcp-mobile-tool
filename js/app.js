@@ -9,6 +9,7 @@ const $ = (id) => document.getElementById(id);
 // --- アプリの状態 ---
 let videoFile = null;
 let audioBuffer = null;
+let usedFallbackCapture = false;
 let keptSegments = []; // [{startMs, endMs, include, gainDb?}]
 let captionSegments = []; // [{start, end, text, originalText}] (元動画のタイムライン基準)
 
@@ -95,10 +96,12 @@ $("btnStartAnalysis").addEventListener("click", async () => {
 
   $("btnStartAnalysis").disabled = true;
   $("videoInfo").textContent = "音声を解析しています...";
+  usedFallbackCapture = false;
 
   try {
     audioBuffer = await silence.decodeAudioFile(file, (progress, phase) => {
       if (phase === "fallback") {
+        usedFallbackCapture = true;
         $("videoInfo").textContent = "音声を解析しています... 0%";
       } else if (phase === "capturing") {
         $("videoInfo").textContent = `音声を解析中... ${Math.round(progress * 100)}%`;
@@ -226,6 +229,7 @@ async function runAutoDetection() {
     const d = segments.debug;
     const lines = [
       `動画: ${videoFile ? videoFile.name : "?"} / ${summary.originalSec.toFixed(1)}秒`,
+      `取得方式: ${usedFallbackCapture ? "フォールバック(再生キャプチャ)" : "高速(直接デコード)"}`,
       `暗騒音の目安: ${d.noiseFloorDb} dB`,
       `発話の目安: ${d.speechLevelDb} dB`,
       `無音判定のしきい値: ${d.enterThresholdDb} dB`,
