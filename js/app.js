@@ -65,31 +65,40 @@ function resetFileIcon() {
 $("videoInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+
+  // iOSでは、ユーザー操作(ファイル選択)からできるだけ間を置かずに
+  // AudioContextを確保しておかないと、この後の非同期処理(サムネイル生成や
+  // ファイル読み込み)を経るうちに「ユーザー操作の有効期限」が切れてしまい、
+  // 音声を1サンプルも取得できなくなる不具合があった。そのため、他のawaitより
+  // 前、一番最初にここで確保しておく。
+  const primedCtx = silence.primeAudioContext();
+
   videoFile = file;
   $("videoLabel").textContent = file.name;
-  $("videoInfo").textContent = "読み込み中...";
+  $("videoInfo").textContent = "サムネイルを生成中...";
   resetFileIcon();
+
+  // サムネイルは動画の選択が完了した時点ですぐに表示する
+  try {
+    const dataUrl = await generateThumbnail(file);
+    showThumbnailInIcon(dataUrl);
+  } catch (err) {
+    console.warn("サムネイル生成に失敗:", err);
+  }
+
+  $("videoInfo").textContent = "音声を解析しています...";
 
   try {
     audioBuffer = await silence.decodeAudioFile(file, (progress, phase) => {
       if (phase === "fallback") {
-        $("videoInfo").textContent = "通常の方法で読み込めなかったため、再生しながら解析します...";
+        $("videoInfo").textContent = "通常の方法で読み込めなかったため、再生しながら解析します... 0%";
       } else if (phase === "capturing") {
         $("videoInfo").textContent = `動画を再生しながら音声を解析中... ${Math.round(progress * 100)}%`;
       }
-    });
+    }, primedCtx);
     const durationSec = audioBuffer.duration.toFixed(1);
     $("videoInfo").textContent = `${durationSec}秒 読み込み完了`;
     markPanelComplete("step-pick");
-
-    // サムネイル生成は音声デコードが完全に終わってから行う。
-    // 同時に複数の<video>要素が動画をデコードしようとすると、モバイルSafariでは
-    // 同時デコード数の制限により互いに競合し、解析側が終わらなくなる不具合が
-    // あったため、意図的に順番(直列)で実行している。
-    generateThumbnail(file).then(showThumbnailInIcon).catch((err) => {
-      console.warn("サムネイル生成に失敗:", err);
-    });
-
     await runAutoDetection();
   } catch (err) {
     console.error(err);
