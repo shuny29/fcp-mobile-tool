@@ -221,6 +221,21 @@ async function runAutoDetection() {
     `元の長さ: ${summary.originalSec.toFixed(1)}秒 → カット後: ${summary.keptSec.toFixed(1)}秒` +
     `(削減率 ${(summary.cutRatio * 100).toFixed(1)}%, ${summary.segmentCount}区間)`;
 
+  // 不具合報告時に共有していただくための診断情報
+  if (segments.debug) {
+    const d = segments.debug;
+    const lines = [
+      `動画: ${videoFile ? videoFile.name : "?"} / ${summary.originalSec.toFixed(1)}秒`,
+      `暗騒音の目安: ${d.noiseFloorDb} dB`,
+      `発話の目安: ${d.speechLevelDb} dB`,
+      `無音判定のしきい値: ${d.enterThresholdDb} dB`,
+      `最大音量: ${d.envelopeMaxDb} dB`,
+      `検出区間: ${keptSegments.map((s) => `${(s.startMs/1000).toFixed(1)}-${(s.endMs/1000).toFixed(1)}s`).join(", ")}`,
+    ];
+    $("debugTextarea").value = lines.join("\n");
+    $("debugDetails").hidden = false;
+  }
+
   drawTimelineStrip(totalMs, keptSegments);
   $("timelineStripWrap").hidden = false;
 

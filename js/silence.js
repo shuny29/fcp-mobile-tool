@@ -228,6 +228,10 @@ function decodeViaRealtimeCapture(file, onProgress, primedCtx = null) {
           // ウォッチドッグ: 動画の長さの3倍+20秒を超えても終わらない場合は、
           // 再生が固まっている(iOSが非表示動画の再生を止めた等)とみなして
           // 明確なエラーで打ち切る。無言で無限に待ち続けるのを防ぐ。
+          // ここまで進んだ時点で「起動時ウォッチドッグ」の役目は終わっている
+          // ため解除する(解除し忘れていたせいで、動画の長さに関わらず
+          // 常に25秒でタイムアウトしてしまう重大な不具合があった)。
+          clearTimeout(startupWatchdog);
           const durationSec = videoEl.duration && isFinite(videoEl.duration) ? videoEl.duration : 60;
           watchdogTimer = setTimeout(() => {
             fail(new Error("動画の再生が進まないため処理を中断しました(端末側で再生が停止した可能性があります)。もう一度お試しください。"));
@@ -388,6 +392,20 @@ export function detectSpeechSegments(audioBuffer) {
   const enterSilenceLinear = noiseFloor + range * THRESHOLD_MIX;
   const exitSilenceLinear = enterSilenceLinear * Math.pow(10, HYSTERESIS_DB / 20);
 
+  // 診断情報(デバッグ表示用)。実際にこのクリップで計算された値を
+  // 確認できるようにしておく(合成テストと実際の音声のズレを
+  // 見分けるため)。
+  const toDb = (linear) => (linear > 1e-9 ? 20 * Math.log10(linear) : -180);
+  const envMax = envelope.reduce((a, b) => Math.max(a, b), 0);
+  const debugInfo = {
+    noiseFloorDb: Math.round(toDb(noiseFloor) * 10) / 10,
+    speechLevelDb: Math.round(toDb(speechLevel) * 10) / 10,
+    enterThresholdDb: Math.round(toDb(enterSilenceLinear) * 10) / 10,
+    exitThresholdDb: Math.round(toDb(exitSilenceLinear) * 10) / 10,
+    envelopeMaxDb: Math.round(toDb(envMax) * 10) / 10,
+    frameCount,
+  };
+
   const isSilentFrame = new Uint8Array(frameCount);
   let stateSilent = envelope[0] < enterSilenceLinear;
   for (let f = 0; f < frameCount; f++) {
@@ -445,7 +463,11 @@ export function detectSpeechSegments(audioBuffer) {
     }
   }
 
-  if (!merged.length) return [];
+  if (!merged.length) {
+    const empty = [];
+    empty.debug = debugInfo;
+    return empty;
+  }
 
   // 6) 検出が確定した後で、区間ごとの音量調整量(dB)を計算する。
   //    各区間の平均音量を測り、区間同士の「中央値」に揃えるためのゲインを
@@ -468,13 +490,15 @@ export function detectSpeechSegments(audioBuffer) {
   const maxBoostLinear = Math.pow(10, GAIN_MAX_BOOST_DB / 20);
   const maxCutLinear = Math.pow(10, -GAIN_MAX_CUT_DB / 20);
 
-  return merged.map(([startMs, endMs], i) => {
+  const result = merged.map(([startMs, endMs], i) => {
     const level = segLevels[i];
     let gainLinear = level > 1e-6 ? targetLevel / level : 1;
     gainLinear = Math.min(maxBoostLinear, Math.max(maxCutLinear, gainLinear));
     const gainDb = Math.round(20 * Math.log10(gainLinear) * 10) / 10;
     return { startMs, endMs, gainDb };
   });
+  result.debug = debugInfo;
+  return result;
 }
 
 export function summarizeCut(totalMs, keptSegments) {

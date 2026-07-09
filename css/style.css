@@ -436,6 +436,28 @@ button.secondary:active { background: var(--panel-3); transform: scale(0.985); }
 .timeline-legend span { display: flex; align-items: center; gap: 5px; }
 .legend-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
 
+.debug-details {
+  margin-top: 10px;
+}
+.debug-details summary {
+  font-size: 0.76rem;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.debug-textarea {
+  width: 100%;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--hairline);
+  background: var(--panel-2);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
 /* ---------------------------------------------------------------------
    Segment / caption lists
    --------------------------------------------------------------------- */

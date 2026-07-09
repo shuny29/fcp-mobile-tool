@@ -87,6 +87,11 @@
         </div>
       </div>
       <p class="hint" id="detectSummary"></p>
+
+      <details class="debug-details" id="debugDetails" hidden>
+        <summary>詳細情報(不具合報告時に共有してください)</summary>
+        <textarea class="debug-textarea" id="debugTextarea" readonly rows="6"></textarea>
+      </details>
     </div>
   </details>
 
@@ -191,14 +196,27 @@
 
 <footer>
   <p>すべての処理は端末内で完結します</p>
-  <p class="version">Rough Cut X v1.17.0</p>
+  <p class="version">Rough Cut X v1.20.0</p>
 </footer>
 
 <script type="module" src="js/app.js"></script>
 <script>
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").catch(() => {});
+      navigator.serviceWorker.register("sw.js").then((reg) => {
+        // ページを開いたタイミングで明示的に更新チェックも行う
+        reg.update().catch(() => {});
+      }).catch(() => {});
+    });
+
+    // 新しいバージョンのService Workerが有効化されたら、開いたままの
+    // ページが古いJavaScriptを実行し続けてしまう問題があったため、
+    // 検知したら自動的に1回だけ再読み込みする(無限ループ防止のガード付き)
+    let hasReloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (hasReloaded) return;
+      hasReloaded = true;
+      window.location.reload();
     });
   }
 </script>
