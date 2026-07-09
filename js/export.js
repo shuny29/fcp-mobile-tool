@@ -40,7 +40,7 @@ function buildTitleXml(cue, localOffsetSec, fps, idx) {
                     <text-style ref="ts${idx}">${textXml}</text-style>
                   </text>
                   <text-style-def id="ts${idx}">
-                    <text-style font="Hiragino Sans" fontSize="${DEFAULT_TELOP_FONT_SIZE}" fontColor="1 1 1 1" bold="1" alignment="center"/>
+                    <text-style font="Hiragino Sans" fontSize="${DEFAULT_TELOP_FONT_SIZE}" fontColor="0 0 0 1" backgroundColor="1 1 1 1" strokeColor="0 0 0 1" strokeWidth="2" bold="1" alignment="center"/>
                   </text-style-def>
                 </title>`;
 }

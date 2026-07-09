@@ -373,6 +373,13 @@ $("btnTranscribe").addEventListener("click", async () => {
     }
   }
 
+  // Whisperが同じフレーズを繰り返してしまう(ハルシネーション)ことがあるため、
+  // 直前と全く同じ文言が続く場合は重複として取り除く
+  captionSegments = captionSegments.filter((seg, i) => {
+    const prev = captionSegments[i - 1];
+    return !(prev && prev.text === seg.text);
+  });
+
   progressEl.value = 100;
   $("transcribeStatus").textContent = `完了しました(${captionSegments.length}個のテロップを生成)`;
   $("btnTranscribe").disabled = false;

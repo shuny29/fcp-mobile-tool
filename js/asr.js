@@ -43,6 +43,11 @@ export async function transcribeFloat32(pipe, float32Audio) {
     return_timestamps: true,
     chunk_length_s: 30,
     stride_length_s: 5,
+    // 同じフレーズを繰り返してしまう(ハルシネーション)現象を抑えるための設定。
+    // 特に軽量モデル(tiny)や、無音に近い区間で起きやすい。
+    no_repeat_ngram_size: 3,
+    repetition_penalty: 1.3,
+    condition_on_previous_text: false,
   });
   // 単一チャンクで timestamps が付かない場合のフォールバック
   if (!result.chunks) {
