@@ -282,6 +282,7 @@ details[open] > .panel-header .chevron { transform: rotate(45deg); }
   height: 30px;
   color: var(--text-tertiary);
 }
+.file-icon-wrap .file-icon[hidden] { display: none; }
 .file-thumb-img {
   width: 56px;
   height: 56px;
