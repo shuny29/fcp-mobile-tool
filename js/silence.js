@@ -5,7 +5,10 @@
 const FRAME_MS = 20; // 解析の最小単位(ミリ秒)
 const ATTACK_MS = 10;    // 包絡線の立ち上がりの速さ(発話の始まりを素早く捉える)
 const RELEASE_MS = 60;   // 包絡線の減衰の速さ(短すぎる瞬間的な音量低下では反応しないための最小限の平滑化)
-const HYSTERESIS_DB = 5; // 「発話に戻る」と判定するために閾値より何dB上回る必要があるか
+const HYSTERESIS_DB = 2; // 「発話に戻る」と判定するために閾値より何dB上回る必要があるか。
+                          // 大きすぎると、録音中に声量が変化した際に「一度無音と判定されると
+                          // 静かめの発話には二度と戻れなくなる」重大な不具合を起こすため、
+                          // 小さめの値にしてある。
 
 /**
  * ユーザー操作(ファイル選択)の直後、間を置かずにAudioContextを作成し
@@ -275,16 +278,16 @@ function mixToMono(audioBuffer) {
 const AUTO_MIN_SILENCE_MS = 800; // これより長く声が途切れたら無音区間として扱う(短い間は残す)
 const AUTO_PADDING_MS = 350;     // 発話の前後に残す余白(語尾の余韻を残すため多めに)
 const NOISE_PERCENTILE = 0.15;   // 「暗騒音」の目安として使う音量分布の下側パーセンタイル
-const SPEECH_PERCENTILE = 0.80;  // 「発話」の目安として使う音量分布の上側パーセンタイル
+const SPEECH_PERCENTILE = 0.60;  // 「発話」の目安として使う音量分布の上側パーセンタイル。
+                                  // 高すぎると、クリップ内で一番大きい声だけを基準にしてしまい、
+                                  // それより静かな(が正当な)発話が無音側に埋もれてしまうため、
+                                  // やや低めにしてある。
 const THRESHOLD_MIX = 0.18;      // 暗騒音〜発話の間のどこにしきい値を置くか(0=暗騒音寄り,1=発話寄り)。
                                   // 低めにすることで、明らかに無音の部分だけをカット対象にする
 
-// 音量の事前均し(AGC)の設定。無音検出の「前に」音量を均すことで、
-// 話者の声量のムラ(離れて話した・小さい声等)がしきい値判定を狂わせるのを防ぐ。
-const AGC_WINDOW_MS = 2000;   // 音量の変化に追従する速さ(短い無音区間では釣られて
-                              // 持ち上がらないよう、無音とみなす長さより十分長くしてある)
-const AGC_MAX_BOOST_DB = 15;  // 持ち上げすぎるとノイズも増幅するため上限を設ける
-const AGC_MAX_CUT_DB = 10;
+// 検出「後」に区間ごとの音量を均すための設定(検出結果には一切影響しない)
+const GAIN_MAX_BOOST_DB = 15;  // 持ち上げすぎるとノイズも増幅するため上限を設ける
+const GAIN_MAX_CUT_DB = 10;
 
 // 声の帯域(だいたい100Hz〜4000Hz)だけを残すシンプルなハイパス+ローパス。
 // 低い暗騒音(空調音等)や高域のヒスノイズを声だと誤検出しないようにする。
@@ -329,92 +332,21 @@ function percentile(sortedArr, p) {
 }
 
 /**
- * 無音検出の「前」に音量を均す(AGC: 自動ゲイン調整)。
- * このクリップの発話音量の目安(パーセンタイル)を目標値とし、
- * ゆっくりとした(AGC_WINDOW_MS)音量変化に追従するゲインを各フレームに適用する。
- * 時定数を無音とみなす長さより十分長くしてあるため、短い無音区間の
- * 暗騒音まで持ち上げてしまうことはない(=無音判定の妨げにならない)。
- *
- * @returns {{leveledMono: Float32Array, perFrameGainDb: Float32Array, frameSize: number}}
- */
-function levelAudioForDetection(monoRaw, sampleRate, voiceBandRaw) {
-  const frameSize = Math.max(1, Math.round((sampleRate * FRAME_MS) / 1000));
-  const frameCount = Math.ceil(monoRaw.length / frameSize);
-
-  const frameRms = new Float32Array(frameCount);
-  for (let f = 0; f < frameCount; f++) {
-    const start = f * frameSize;
-    const end = Math.min(start + frameSize, voiceBandRaw.length);
-    let sumSq = 0;
-    for (let k = start; k < end; k++) sumSq += voiceBandRaw[k] * voiceBandRaw[k];
-    frameRms[f] = Math.sqrt(sumSq / Math.max(1, end - start));
-  }
-
-  // 「このクリップの発話音量の目安」を、均す前の音量分布から求める
-  const sortedRaw = frameRms.slice().sort();
-  const targetLinear = Math.max(percentile(sortedRaw, SPEECH_PERCENTILE), 1e-6);
-
-  // ゆっくり追従する音量の包絡線(短い無音区間では追従しきらない程度の速さ)
-  const agcCoeff = Math.exp(-1 / (AGC_WINDOW_MS / FRAME_MS));
-  const levelEnvelope = new Float32Array(frameCount);
-  let env = frameRms[0] || targetLinear;
-  for (let f = 0; f < frameCount; f++) {
-    env = agcCoeff * env + (1 - agcCoeff) * frameRms[f];
-    levelEnvelope[f] = env;
-  }
-
-  const maxBoostLinear = Math.pow(10, AGC_MAX_BOOST_DB / 20);
-  const maxCutLinear = Math.pow(10, -AGC_MAX_CUT_DB / 20);
-  const perFrameGainLinear = new Float32Array(frameCount);
-  const perFrameGainDb = new Float32Array(frameCount);
-  for (let f = 0; f < frameCount; f++) {
-    let g = targetLinear / Math.max(levelEnvelope[f], 1e-6);
-    g = Math.min(maxBoostLinear, Math.max(maxCutLinear, g));
-    perFrameGainLinear[f] = g;
-    perFrameGainDb[f] = 20 * Math.log10(g);
-  }
-
-  const leveledMono = new Float32Array(monoRaw.length);
-  for (let f = 0; f < frameCount; f++) {
-    const start = f * frameSize;
-    const end = Math.min(start + frameSize, monoRaw.length);
-    const g = perFrameGainLinear[f];
-    for (let k = start; k < end; k++) leveledMono[k] = monoRaw[k] * g;
-  }
-
-  return { leveledMono, perFrameGainDb, frameSize };
-}
-
-/**
  * 発話区間(=無音でない区間)を自動検出する。設定値は一切不要。
  *
  * 手順:
  * 1) 人の声の帯域だけを取り出す(空調音やヒスノイズを声と誤認しないため)
  * 2) フレームごとの音量(RMS)を計算し、アタック/リリースで包絡線を平滑化
  *    (語尾や子音での瞬間的な音量低下を無音と誤判定しないため)
- * 3) このクリップ自身の音量分布から「暗騒音」と「発話」の目安を求め、
- *    その間にしきい値を自動的に置く(録音レベルや声量に依存しないようにする、
- *    ≒ 事前に音量を均してから判定するのと同じ効果)
+ * 3) このクリップ自身の音量分布(生の信号)から「暗騒音」と「発話」の
+ *    目安を求め、その間にしきい値を自動的に置く
  * 4) ヒステリシス付きで無音/発話を判定し、短すぎる無音は無視する
  * 5) 冒頭の無音はカットの対象から外す(先頭は必ず0から残す)
- *
- * @returns [{startMs, endMs}, ...] 元の音声全体を基準にした発話区間のリスト
- */
-/**
- * 発話区間(=無音でない区間)を自動検出する。設定値は一切不要。
- *
- * 手順:
- * 0) 無音検出の「前」に音量を均す(AGC)。話者の声量のムラが
- *    しきい値判定を狂わせるのを防ぎ、検出精度を高めるため。
- * 1) 人の声の帯域だけを取り出す(空調音やヒスノイズを声と誤認しないため)
- * 2) フレームごとの音量(RMS)を計算し、アタック/リリースで包絡線を平滑化
- *    (語尾や子音での瞬間的な音量低下を無音と誤判定しないため)
- * 3) 均した後のクリップの音量分布から「暗騒音」と「発話」の目安を求め、
- *    その間にしきい値を自動的に置く
- * 4) ヒステリシス付きで無音/発話を判定し、短すぎる無音は無視する
- * 5) 冒頭の無音はカットの対象から外す(先頭は必ず0から残す)
- * 6) 各発話区間について、その区間で実際にかかった音量調整量(dB)の
- *    平均を求め、gainDbとして一緒に返す(人の声を一律同じ音量にするため)
+ * 6) 無音検出の結果が確定した「後」に、各発話区間の音量調整量(dB)を
+ *    別途計算する(人の声を一律同じ音量にするため)。この計算は検出結果に
+ *    一切影響しない(以前、検出の前に音量を均す方式を試したが、区間の
+ *    一部が誤って無音判定されてしまう重大な不具合があったため、検出とは
+ *    完全に切り離す設計に変更した)。
  *
  * @returns [{startMs, endMs, gainDb}, ...] 元の音声全体を基準にした発話区間のリスト
  */
@@ -423,12 +355,8 @@ export function detectSpeechSegments(audioBuffer) {
   const monoRaw = mixToMono(audioBuffer);
   const totalMs = (audioBuffer.length / sampleRate) * 1000;
 
-  // 0) 無音検出の前に音量を均す
-  const voiceBandRaw = isolateVoiceBand(monoRaw, sampleRate);
-  const { leveledMono, perFrameGainDb, frameSize } = levelAudioForDetection(monoRaw, sampleRate, voiceBandRaw);
-
-  // 1) 均した後の信号から、あらためて声の帯域を取り出す
-  const voiceBand = isolateVoiceBand(leveledMono, sampleRate);
+  const voiceBand = isolateVoiceBand(monoRaw, sampleRate);
+  const frameSize = Math.max(1, Math.round((sampleRate * FRAME_MS) / 1000));
   const frameCount = Math.ceil(voiceBand.length / frameSize);
 
   const frameRms = new Float32Array(frameCount);
@@ -515,20 +443,35 @@ export function detectSpeechSegments(audioBuffer) {
     }
   }
 
-  // 各区間で実際にかかった音量調整量(dB)の平均を求める
-  // (人の声を一律同じ音量にするための調整量として、そのままFCPXMLの
-  // 非破壊ゲインに使う)
-  return merged.map(([startMs, endMs]) => {
-    const startFrame = Math.floor(startMs / FRAME_MS);
-    const endFrame = Math.min(perFrameGainDb.length, Math.ceil(endMs / FRAME_MS));
-    let sum = 0;
+  if (!merged.length) return [];
+
+  // 6) 検出が確定した後で、区間ごとの音量調整量(dB)を計算する。
+  //    各区間の平均音量を測り、区間同士の「中央値」に揃えるためのゲインを
+  //    求める(人の声を一律同じ音量にするため)。この処理は検出結果には
+  //    一切影響しない。
+  const segLevels = merged.map(([startMs, endMs]) => {
+    const startSample = Math.max(0, Math.floor((startMs / 1000) * sampleRate));
+    const endSample = Math.min(voiceBand.length, Math.floor((endMs / 1000) * sampleRate));
+    let sumSq = 0;
     let count = 0;
-    for (let f = startFrame; f < endFrame; f++) {
-      sum += perFrameGainDb[f];
+    for (let k = startSample; k < endSample; k++) {
+      sumSq += voiceBand[k] * voiceBand[k];
       count++;
     }
-    const gainDb = count > 0 ? sum / count : 0;
-    return { startMs, endMs, gainDb: Math.round(gainDb * 10) / 10 };
+    return count > 0 ? Math.sqrt(sumSq / count) : 0;
+  });
+
+  const sortedLevels = segLevels.slice().sort((a, b) => a - b);
+  const targetLevel = Math.max(percentile(sortedLevels, 0.5), 1e-6);
+  const maxBoostLinear = Math.pow(10, GAIN_MAX_BOOST_DB / 20);
+  const maxCutLinear = Math.pow(10, -GAIN_MAX_CUT_DB / 20);
+
+  return merged.map(([startMs, endMs], i) => {
+    const level = segLevels[i];
+    let gainLinear = level > 1e-6 ? targetLevel / level : 1;
+    gainLinear = Math.min(maxBoostLinear, Math.max(maxCutLinear, gainLinear));
+    const gainDb = Math.round(20 * Math.log10(gainLinear) * 10) / 10;
+    return { startMs, endMs, gainDb };
   });
 }
 
