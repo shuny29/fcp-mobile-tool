@@ -105,12 +105,20 @@ function decodeViaRealtimeCapture(file, onProgress) {
 
     let watchdogTimer = null;
 
+    // メタデータ取得(loadedmetadataイベント)自体が発火しないまま固まる
+    // ケースへの保険。動画の長さに応じたウォッチドッグはメタデータ取得後にしか
+    // 設定できないため、それより前の段階でも必ず打ち切れるようにしておく。
+    const startupWatchdog = setTimeout(() => {
+      fail(new Error("動画の読み込みがタイムアウトしました(対応していない形式の可能性があります)。別の動画でお試しください。"));
+    }, 25000);
+
     function cleanup() {
       try { processor.disconnect(); } catch {}
       try { source.disconnect(); } catch {}
       try { silentGain.disconnect(); } catch {}
       try { ctx.close(); } catch {}
       if (watchdogTimer) clearTimeout(watchdogTimer);
+      clearTimeout(startupWatchdog);
       videoEl.pause();
       if (createdDynamically) {
         videoEl.remove();

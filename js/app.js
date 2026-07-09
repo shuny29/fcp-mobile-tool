@@ -55,7 +55,9 @@ function markPanelComplete(panelId) {
 // Step1: 動画選択 + サムネイル表示(アップロードエリアのアイコン枠に表示)
 // ---------------------------------------------------------------------
 function resetFileIcon() {
-  $("fileIconSvg").hidden = false;
+  const svg = $("fileIconSvg");
+  svg.hidden = false;
+  svg.style.display = "";
   $("fileThumbImg").hidden = true;
   $("playBadge").hidden = true;
 }
@@ -67,10 +69,6 @@ $("videoInput").addEventListener("change", async (e) => {
   $("videoLabel").textContent = file.name;
   $("videoInfo").textContent = "読み込み中...";
   resetFileIcon();
-  // サムネイルは音声デコードと並行して生成する(互いに独立した処理のため)
-  generateThumbnail(file).then(showThumbnailInIcon).catch((err) => {
-    console.warn("サムネイル生成に失敗:", err);
-  });
 
   try {
     audioBuffer = await silence.decodeAudioFile(file, (progress, phase) => {
@@ -83,6 +81,15 @@ $("videoInput").addEventListener("change", async (e) => {
     const durationSec = audioBuffer.duration.toFixed(1);
     $("videoInfo").textContent = `${durationSec}秒 読み込み完了`;
     markPanelComplete("step-pick");
+
+    // サムネイル生成は音声デコードが完全に終わってから行う。
+    // 同時に複数の<video>要素が動画をデコードしようとすると、モバイルSafariでは
+    // 同時デコード数の制限により互いに競合し、解析側が終わらなくなる不具合が
+    // あったため、意図的に順番(直列)で実行している。
+    generateThumbnail(file).then(showThumbnailInIcon).catch((err) => {
+      console.warn("サムネイル生成に失敗:", err);
+    });
+
     await runAutoDetection();
   } catch (err) {
     console.error(err);
@@ -96,13 +103,33 @@ function generateThumbnail(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const video = document.createElement("video");
-    video.src = url;
+    // 画面外に配置しつつ、DOMには接続しておく(接続されていない<video>は
+    // 一部端末でイベントが正しく発火せず、処理が固まる原因になるため)
+    Object.assign(video.style, {
+      position: "fixed", left: "-9999px", top: "0", width: "2px", height: "2px",
+    });
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute("webkit-playsinline", "true");
     video.preload = "metadata";
+    document.body.appendChild(video);
 
-    const settle = (fn, val) => { URL.revokeObjectURL(url); fn(val); };
+    let settledFlag = false;
+    const settle = (fn, val) => {
+      if (settledFlag) return;
+      settledFlag = true;
+      clearTimeout(timeoutTimer);
+      URL.revokeObjectURL(url);
+      video.remove();
+      fn(val);
+    };
 
+    // サムネイル生成が万一固まっても、他の処理をブロックしないための保険
+    const timeoutTimer = setTimeout(() => {
+      settle(reject, new Error("サムネイル生成がタイムアウトしました"));
+    }, 8000);
+
+    video.src = url;
     video.addEventListener("loadedmetadata", () => {
       const seekTo = Math.min(0.3, (video.duration || 1) / 2);
       try { video.currentTime = seekTo; } catch { /* noop */ }
@@ -128,7 +155,11 @@ function generateThumbnail(file) {
 // 生成したサムネイル(静止画)を、アップロードエリアのアイコン枠に永続表示する
 function showThumbnailInIcon(dataUrl) {
   $("fileThumbImg").src = dataUrl;
-  $("fileIconSvg").hidden = true;
+  const svg = $("fileIconSvg");
+  svg.hidden = true;
+  // hidden属性の[hidden]{display:none}がCSSの詳細度で上書きされる端末が
+  // あった場合の保険として、インラインstyleでも直接非表示にする
+  svg.style.display = "none";
   $("fileThumbImg").hidden = false;
   $("playBadge").hidden = false;
 }
