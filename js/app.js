@@ -66,17 +66,12 @@ $("videoInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  // iOSでは、ユーザー操作(ファイル選択)からできるだけ間を置かずに
-  // AudioContextを確保しておかないと、この後の非同期処理(サムネイル生成や
-  // ファイル読み込み)を経るうちに「ユーザー操作の有効期限」が切れてしまい、
-  // 音声を1サンプルも取得できなくなる不具合があった。そのため、他のawaitより
-  // 前、一番最初にここで確保しておく。
-  const primedCtx = silence.primeAudioContext();
-
   videoFile = file;
   $("videoLabel").textContent = file.name;
   $("videoInfo").textContent = "サムネイルを生成中...";
   resetFileIcon();
+  $("btnStartAnalysis").hidden = true;
+  $("btnStartAnalysis").disabled = false;
 
   // サムネイルは動画の選択が完了した時点ですぐに表示する
   try {
@@ -86,6 +81,21 @@ $("videoInput").addEventListener("change", async (e) => {
     console.warn("サムネイル生成に失敗:", err);
   }
 
+  $("videoInfo").textContent = "準備ができました";
+  $("btnStartAnalysis").hidden = false;
+});
+
+$("btnStartAnalysis").addEventListener("click", async () => {
+  const file = videoFile;
+  if (!file) return;
+
+  // iOSでは、音声の再生許可(AudioContextの有効化)を得るには「直接的な
+  // タップ操作の中」で行う必要があり、ファイル選択(change イベント)や
+  // その後の非同期処理を経てからでは間に合わないことがあった。
+  // このボタンのクリックハンドラの中ですぐに確保することで確実に有効化する。
+  const primedCtx = silence.primeAudioContext();
+
+  $("btnStartAnalysis").disabled = true;
   $("videoInfo").textContent = "音声を解析しています...";
 
   try {
@@ -98,12 +108,14 @@ $("videoInput").addEventListener("change", async (e) => {
     }, primedCtx);
     const durationSec = audioBuffer.duration.toFixed(1);
     $("videoInfo").textContent = `${durationSec}秒 読み込み完了`;
+    $("btnStartAnalysis").hidden = true;
     markPanelComplete("step-pick");
     await runAutoDetection();
   } catch (err) {
     console.error(err);
     $("videoInfo").textContent =
       `音声の読み込みに失敗しました(${err.message || "不明なエラー"})。別の動画でお試しください。`;
+    $("btnStartAnalysis").disabled = false;
   }
 });
 
