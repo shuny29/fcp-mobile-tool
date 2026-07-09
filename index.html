@@ -72,7 +72,7 @@
       <span class="chevron"></span>
     </summary>
     <div class="panel-body">
-      <p class="hint">人の声を自動解析し、無音区間を検出します。設定は不要です。</p>
+      <p class="hint">人の声の音量を一律に均してから、無音区間を自動検出します。設定は不要です。</p>
 
       <div class="status-line" id="autoDetectStatusLine">
         <span class="status-dot"></span>
@@ -94,28 +94,21 @@
   <details class="panel" id="step-segments" hidden>
     <summary class="panel-header">
       <span class="step-index">3</span>
-      <span class="panel-title">区間の確認 & 字幕生成</span>
+      <span class="panel-title">区間の確認 & テロップ生成</span>
       <span class="chevron"></span>
     </summary>
     <div class="panel-body">
       <p class="hint">チェックを外すと、その区間はカット(削除)されます</p>
       <div id="segmentList" class="segment-list"></div>
 
-      <p class="eyebrow" style="margin-top:16px;">字幕モデル</p>
+      <p class="eyebrow" style="margin-top:16px;">テロップの精度</p>
       <div class="segmented" id="modelSegmented" data-value="base">
         <button type="button" data-value="tiny">高速</button>
         <button type="button" data-value="base" class="active">標準</button>
         <button type="button" data-value="small">高精度</button>
       </div>
 
-      <p class="eyebrow" style="margin-top:16px;">音量の最適化先</p>
-      <div class="segmented" id="lufsSegmented" data-value="youtube">
-        <button type="button" data-value="youtube" class="active">標準</button>
-        <button type="button" data-value="tiktok_instagram">TikTok/IG</button>
-        <button type="button" data-value="podcast">ポッドキャスト</button>
-      </div>
-
-      <button id="btnTranscribe" class="primary">字幕を自動生成(音量調整も同時に実行)</button>
+      <button id="btnTranscribe" class="primary">テロップを自動生成</button>
 
       <div class="status-line" id="transcribeStatusLine" hidden>
         <span class="status-dot"></span>
@@ -198,7 +191,7 @@
 
 <footer>
   <p>すべての処理は端末内で完結します</p>
-  <p class="version">Rough Cut X v1.13.0</p>
+  <p class="version">Rough Cut X v1.14.0</p>
 </footer>
 
 <script type="module" src="js/app.js"></script>

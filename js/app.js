@@ -3,7 +3,6 @@ import * as learning from "./learning.js";
 import * as silence from "./silence.js";
 import * as asr from "./asr.js";
 import * as exporter from "./export.js";
-import * as loudness from "./loudness.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -30,7 +29,6 @@ function getSegmented(containerId) {
   return $(containerId).dataset.value;
 }
 setupSegmented("modelSegmented");
-setupSegmented("lufsSegmented");
 
 // ---------------------------------------------------------------------
 // ステップ進捗ドット(ヘッダー)とパネルの開閉制御
@@ -101,9 +99,9 @@ $("btnStartAnalysis").addEventListener("click", async () => {
   try {
     audioBuffer = await silence.decodeAudioFile(file, (progress, phase) => {
       if (phase === "fallback") {
-        $("videoInfo").textContent = "通常の方法で読み込めなかったため、再生しながら解析します... 0%";
+        $("videoInfo").textContent = "音声を解析しています... 0%";
       } else if (phase === "capturing") {
-        $("videoInfo").textContent = `動画を再生しながら音声を解析中... ${Math.round(progress * 100)}%`;
+        $("videoInfo").textContent = `音声を解析中... ${Math.round(progress * 100)}%`;
       }
     }, primedCtx);
     const durationSec = audioBuffer.duration.toFixed(1);
@@ -190,7 +188,7 @@ function showThumbnailInIcon(dataUrl) {
 // ---------------------------------------------------------------------
 async function runAutoDetection() {
   goToStep(2, "step-settings");
-  $("autoDetectStatus").textContent = "音声を解析して無音区間を検出しています...";
+  $("autoDetectStatus").textContent = "音量を均してから無音区間を検出しています...";
   // ステータス文言を描画させてから重い処理に入る
   await new Promise((r) => requestAnimationFrame(r));
 
@@ -199,7 +197,7 @@ async function runAutoDetection() {
 
   const totalMs = audioBuffer.duration * 1000;
   const summary = silence.summarizeCut(totalMs, keptSegments);
-  $("autoDetectStatus").textContent = "検出が完了しました";
+  $("autoDetectStatus").textContent = "音量調整・検出が完了しました";
   $("detectSummary").textContent =
     `元の長さ: ${summary.originalSec.toFixed(1)}秒 → カット後: ${summary.keptSec.toFixed(1)}秒` +
     `(削減率 ${(summary.cutRatio * 100).toFixed(1)}%, ${summary.segmentCount}区間)`;
@@ -313,17 +311,14 @@ $("btnTranscribe").addEventListener("click", async () => {
   captionSegments = [];
   for (let i = 0; i < included.length; i++) {
     const seg = included[i];
-    $("transcribeStatus").textContent = `処理中... (${i + 1}/${included.length}) 音量解析+文字起こし`;
+    $("transcribeStatus").textContent = `文字起こし中... (${i + 1}/${included.length})`;
     progressEl.value = Math.round(((i) / included.length) * 100);
 
     const startSec = seg.startMs / 1000;
     const endSec = seg.endMs / 1000;
 
-    // 音量正規化: この発話区間のラウドネスを測定し、目標値に合わせるゲインを算出
-    // (実際の音声は書き換えず、FCPXMLの非破壊ゲインとして書き出す)
-    const targetLufs = loudness.LUFS_PRESETS[getSegmented("lufsSegmented")];
-    seg.gainDb = await loudness.measureSegmentGain(audioBuffer, startSec, endSec, targetLufs);
-
+    // 音量調整はStep2の無音検出時に既に完了済み(seg.gainDbに反映済み)なので、
+    // ここでは文字起こしだけを行う
     const audio16k = await asr.extractResampled16k(audioBuffer, startSec, endSec);
     const result = await asr.transcribeFloat32(pipe, audio16k);
 
@@ -341,7 +336,7 @@ $("btnTranscribe").addEventListener("click", async () => {
   }
 
   progressEl.value = 100;
-  $("transcribeStatus").textContent = `完了しました(${captionSegments.length}個の字幕セグメント / 音量を自動調整済み)`;
+  $("transcribeStatus").textContent = `完了しました(${captionSegments.length}個のテロップを生成)`;
   $("btnTranscribe").disabled = false;
 
   renderSegmentList();

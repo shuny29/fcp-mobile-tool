@@ -580,7 +580,8 @@ footer .version {
   font-family: var(--font-mono);
   color: var(--text-tertiary);
   opacity: 0.7;
-  letter-spacing: 0.02em;
+  letter-spacing: -0.02em;
+  word-spacing: -0.15em;
 }
 
 /* ---------------------------------------------------------------------
