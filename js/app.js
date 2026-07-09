@@ -166,18 +166,26 @@ function generateThumbnail(file) {
       settle(reject, new Error("サムネイル生成がタイムアウトしました"));
     }, 8000);
 
-    // "seeked"イベントがブラウザによって発火しないケースがあるため、
-    // 一定時間内に発火しなければ、その時点で表示されているフレームを
-    // そのままキャプチャするフォールバックを用意しておく
+    // seekやloadeddataのイベントだけに頼ると、ブラウザによっては実際には
+    // フレームがデコードされないまま(真っ黒のまま)キャプチャしてしまう
+    // ことがあった。そのため、実際に一瞬だけ再生してから一時停止し、
+    // 確実にフレームがデコードされた状態でキャプチャする。
     let fallbackTimer = null;
 
     video.src = url;
     video.addEventListener("loadedmetadata", () => {
       const seekTo = Math.min(0.3, (video.duration || 1) / 2);
       try { video.currentTime = seekTo; } catch { /* noop */ }
-      fallbackTimer = setTimeout(captureFrame, 1500);
+
+      const playPromise = video.play();
+      if (playPromise && typeof playPromise.catch === "function") {
+        playPromise.catch(() => { /* 再生できなくてもフォールバックで拾う */ });
+      }
+      fallbackTimer = setTimeout(() => {
+        video.pause();
+        captureFrame();
+      }, 300);
     });
-    video.addEventListener("seeked", captureFrame);
     video.addEventListener("error", () => settle(reject, new Error("サムネイル生成に失敗しました")));
   });
 }
