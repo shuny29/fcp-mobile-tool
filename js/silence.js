@@ -84,23 +84,17 @@ function decodeViaRealtimeCapture(file, onProgress, primedCtx = null) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
 
-    // iOSは「見えていない(1x1・画面外・opacity:0)」動画の再生を
-    // 抑制/停止することがあり、それが無限に終わらない不具合の主因だった。
-    // そのため、既存のプレビュー要素があればそれを使い、なければ
-    // 小さいながらも実際に画面上で視認できるサイズ・位置で生成する。
-    let videoEl = document.getElementById("analysisPreviewVideo");
-    let previewWrap = document.getElementById("analysisPreview");
-    const createdDynamically = !videoEl;
-    if (!videoEl) {
-      videoEl = document.createElement("video");
-      Object.assign(videoEl.style, {
-        position: "fixed", right: "10px", bottom: "10px",
-        width: "72px", height: "40px", borderRadius: "6px",
-        zIndex: "9999", background: "#000",
-      });
-      document.body.appendChild(videoEl);
-    }
-    if (previewWrap) previewWrap.hidden = false;
+    // 以前は既存のプレビュー要素を使い回していたが、状態が残ってしまい
+    // 動画の読み込みが固まる不具合の原因になっていた。サムネイル生成
+    // (generateThumbnail)で確実に動いている「毎回新規作成し、画面内の
+    // 小さな領域に配置する」方式に統一する。
+    const videoEl = document.createElement("video");
+    Object.assign(videoEl.style, {
+      position: "fixed", right: "10px", bottom: "10px",
+      width: "72px", height: "40px", borderRadius: "6px",
+      zIndex: "9999", background: "#000",
+    });
+    document.body.appendChild(videoEl);
 
     videoEl.src = url;
     videoEl.muted = true;           // ミュート再生はユーザー操作なしでも許可される
@@ -144,13 +138,7 @@ function decodeViaRealtimeCapture(file, onProgress, primedCtx = null) {
       if (watchdogTimer) clearTimeout(watchdogTimer);
       clearTimeout(startupWatchdog);
       videoEl.pause();
-      if (createdDynamically) {
-        videoEl.remove();
-      } else {
-        videoEl.removeAttribute("src");
-        videoEl.load();
-        if (previewWrap) previewWrap.hidden = true;
-      }
+      videoEl.remove();
       URL.revokeObjectURL(url);
     }
 
