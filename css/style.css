@@ -393,6 +393,7 @@ button.primary, button.secondary {
   cursor: pointer;
   transition: transform 0.08s ease, background 0.15s, opacity 0.15s;
 }
+button.primary[hidden], button.secondary[hidden] { display: none; }
 button.primary {
   background: var(--accent);
   color: white;
