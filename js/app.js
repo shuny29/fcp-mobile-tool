@@ -29,7 +29,7 @@ function setupSegmented(containerId) {
 function getSegmented(containerId) {
   return $(containerId).dataset.value;
 }
-setupSegmented("modelSegmented");
+// (モデル選択のセグメントコントロールは廃止したため、初期化不要)
 
 // ---------------------------------------------------------------------
 // ステップ進捗ドット(ヘッダー)とパネルの開閉制御
@@ -337,9 +337,8 @@ $("btnTranscribe").addEventListener("click", async () => {
   progressEl.hidden = false;
   progressEl.value = 0;
 
-  $("transcribeStatus").textContent = "モデルを準備中(初回は数十MB〜のダウンロードがあります)...";
-  const modelKey = getSegmented("modelSegmented");
-  const pipe = await asr.getAsrPipeline(modelKey, (info) => {
+  $("transcribeStatus").textContent = "モデルを準備中(初回は100MB程度のダウンロードがあります)...";
+  const pipe = await asr.getAsrPipeline((info) => {
     if (info.status === "progress" && info.total) {
       const pct = Math.round((info.loaded / info.total) * 100);
       $("transcribeStatus").textContent = `モデルをダウンロード中... ${pct}%`;
@@ -381,7 +380,8 @@ $("btnTranscribe").addEventListener("click", async () => {
   });
 
   progressEl.value = 100;
-  $("transcribeStatus").textContent = `完了しました(${captionSegments.length}個のテロップを生成)`;
+  const deviceLabel = asr.getActiveDevice() === "webgpu" ? "WebGPU" : "WASM(CPU)";
+  $("transcribeStatus").textContent = `完了しました(${captionSegments.length}個のテロップを生成 / 実行方式: ${deviceLabel})`;
   $("btnTranscribe").disabled = false;
 
   renderSegmentList();
